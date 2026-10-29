@@ -3,7 +3,7 @@
 All notable changes to this plugin are recorded here. The version applies to `nan-usage.ts`: replace the file, then
 re-approve the plugin in CodexBar whenever the manifest changes.
 
-## 0.0.2 — unreleased
+## 0.0.2 — 2026-10-29
 
 **Card layout**
 
@@ -25,12 +25,16 @@ re-approve the plugin in CodexBar whenever the manifest changes.
 
   A purchased pool does not expire with the billing cycle, so it cannot share that reset. The host's `monthDay` drops the
   year, so the pool's line appends it: a pool can outlive the current year. A paused pool has no bar and no expiry.
+- The pool's bar is the share you still hold, so an untouched pool is full and a drained one empties. The API reports only
+  what is left, so the largest value seen per expiry is remembered (`persistent-storage`) as the pool's size; a new expiry
+  starts a new pool at full, and an unavailable store leaves the bar full rather than failing.
 - Mirrors the dashboard's states: `pausado, requiere membresía activa` when `extraUsable` is false (no expiry shown),
   and `en uso` once the base cap is spent.
 
 **Verification**
 
-- Seventeen offline checks, including a paused pool, an in-use pool and the harness gaining `format.monthDay`.
+- Twenty offline checks, including a full pool, a drained pool against its remembered size, a new expiry, a paused pool,
+  an in-use pool, an unavailable store and the harness gaining `format.monthDay`.
 
 ## 0.0.1 — 2026-10-29
 

@@ -42,7 +42,7 @@ defineProvider({
       type: "secure",
     },
   ],
-  capabilities: ["browser-cookies", "http-status"],
+  capabilities: ["browser-cookies", "http-status", "persistent-storage"],
   cookieDomains: ["nan.builders"],
   async fetchUsage(ctx) {
     const fail = (field: string): never => {
@@ -254,9 +254,25 @@ defineProvider({
         return reset === undefined ? undefined : `reinicia ${reset}`;
       };
 
+      // The payload only reports how much of a purchased pool is left, never how large it was, so the
+      // largest value seen for a given expiry is remembered and becomes the pool's size. That makes an
+      // untouched pool read full and a drained one read empty, and a new expiry starts a new pool.
+      const poolSize = (row: ModelRow): number => {
+        if (row.extra <= 0) return row.extra;
+        const key = `nan-extra:${row.name}:${row.extraExpiresAt?.toISOString() ?? "none"}`;
+        try {
+          const stored = Number(ctx.storage.get(key) ?? 0);
+          const size = Number.isFinite(stored) && stored > row.extra ? stored : row.extra;
+          if (size !== stored) ctx.storage.set(key, String(size));
+          return size;
+        } catch (error) {
+          void error;
+          return row.extra;
+        }
+      };
+
       // The dashboard draws the extra pool as its own bar under the base one, and CodexBar gives a
-      // row a single bar, so the pool becomes a sibling row. Its width is the share of the base cap
-      // still covered by extra tokens, inverted because a CodexBar progress is a consumed fraction.
+      // row a single bar, so the pool becomes a sibling row holding the remaining share of the pool.
       const extraRow = (row: ModelRow): Record<string, unknown> | undefined => {
         if (row.extra <= 0) return undefined;
         const parts: string[] = [];
@@ -272,8 +288,7 @@ defineProvider({
           label: "+ extra",
           value: parts.join(" · "),
           secondaryValue: null,
-          progress:
-            row.extraUsable && row.cap > 0 ? Math.min(1, Math.max(0, 1 - row.extra / row.cap)) : null,
+          progress: row.extraUsable && poolSize(row) > 0 ? Math.min(1, row.extra / poolSize(row)) : null,
           usageValue: null,
         };
       };

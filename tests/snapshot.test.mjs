@@ -50,6 +50,8 @@ const retiredQuota = {
 };
 
 function makeCtx({
+  store = new Map(),
+  storageThrows = false,
   key = null,
   cookieHeader = null,
   billing = freeBilling,
@@ -61,6 +63,18 @@ function makeCtx({
   const calls = [];
   return {
     calls,
+    storage: {
+      get: (name) => {
+        if (storageThrows) throw new Error("storage unavailable");
+        return store.has(name) ? store.get(name) : null;
+      },
+      set: (name, value) => {
+        if (storageThrows) throw new Error("storage unavailable");
+        store.set(name, value);
+      },
+      remove: (name) => store.delete(name),
+    },
+    store,
     settings: {
       get: () => null,
       getSecret: (name) => (name === "API_KEY" ? key : null),
@@ -142,6 +156,8 @@ const manifest = await loadPlugin();
 check("manifest declares one HTTPS origin and a secure API key setting", () => {
   const origins = JSON.stringify(manifest.endpoints);
   if (!origins.includes("https://cloud-api.nan.builders")) throw new Error(`origins: ${origins}`);
+  const capabilities = JSON.stringify(manifest.capabilities ?? []);
+  if (!capabilities.includes("persistent-storage")) throw new Error(`capabilities: ${capabilities}`);
   const setting = (manifest.settings ?? []).find((entry) => entry.key === "API_KEY");
   if (!setting) throw new Error("missing API_KEY setting");
   if (setting.type !== "secure") throw new Error(`API_KEY type ${setting.type}`);
@@ -244,10 +260,68 @@ check("an extra-usage pool is its own bar under the model", async () => {
   if ((base.secondaryValue ?? "").includes("extra")) throw new Error("the pool leaked into the model line");
   if (!/^125M restantes/.test(extra.value)) throw new Error(`extra value: ${extra.value}`);
   if (!/caduca Apr 29 2027/.test(extra.value)) throw new Error(`expiry missing its year: ${extra.value}`);
-  // The pool covers a quarter of the base cap, so a consumed-fraction bar starts at 0.75.
-  if (Math.abs(extra.progress - 0.75) > 1e-9) throw new Error(`extra progress: ${extra.progress}`);
+  // Nothing has been spent from the pool yet, so its bar is full.
+  if (extra.progress !== 1) throw new Error(`untouched pool is not full: ${extra.progress}`);
   const count = rows.filter((row) => row.label === "+ extra").length;
   if (count !== 1) throw new Error(`only one pool was bought, found ${count} extra rows`);
+});
+
+check("a drained pool shrinks against the size it was first seen at", async () => {
+  const store = new Map();
+  const pool = (extraTokens) => makeCtx({
+    store,
+    key: "sk-test",
+    body: {
+      periodStart: "2026-10-01",
+      models: [{
+        model: "Oven 3.8 Flash",
+        cap: 500_000_000,
+        tokensUsed: 100_000_000,
+        extraTokens,
+        extraUsable: true,
+        extraExpiresAt: "2027-04-29T00:00:00.000Z",
+        periodEnd: "2026-11-01",
+      }],
+    },
+  });
+  const full = await manifest.fetchUsage(pool(125_000_000));
+  const fullExtra = full.details.find((entry) => entry.title === "Modelos").rows.find((row) => row.label === "+ extra");
+  if (fullExtra.progress !== 1) throw new Error(`first sight not full: ${fullExtra.progress}`);
+  const half = await manifest.fetchUsage(pool(62_500_000));
+  const halfExtra = half.details.find((entry) => entry.title === "Modelos").rows.find((row) => row.label === "+ extra");
+  if (Math.abs(halfExtra.progress - 0.5) > 1e-9) throw new Error(`drained pool: ${halfExtra.progress}`);
+  if (!halfExtra.value.includes("62.5M restantes")) throw new Error(`value: ${halfExtra.value}`);
+});
+
+check("a new expiry date starts a fresh pool at full", async () => {
+  const store = new Map();
+  store.set("nan-extra:Oven 3.8 Flash:2027-04-29T00:00:00.000Z", "500000000");
+  const ctx = makeCtx({
+    store,
+    key: "sk-test",
+    body: {
+      periodStart: "2026-10-01",
+      models: [{
+        model: "Oven 3.8 Flash",
+        cap: 500_000_000,
+        tokensUsed: 100_000_000,
+        extraTokens: 90_000_000,
+        extraUsable: true,
+        extraExpiresAt: "2028-01-15T00:00:00.000Z",
+        periodEnd: "2026-11-01",
+      }],
+    },
+  });
+  const extra = (await manifest.fetchUsage(ctx)).details
+    .find((entry) => entry.title === "Modelos").rows.find((row) => row.label === "+ extra");
+  if (extra.progress !== 1) throw new Error(`new expiry inherited an old pool: ${extra.progress}`);
+});
+
+check("storage being unavailable leaves the pool full instead of failing", async () => {
+  const ctx = makeCtx({ key: "sk-test", storageThrows: true });
+  const snapshot = await manifest.fetchUsage(ctx);
+  const extra = snapshot.details.find((entry) => entry.title === "Modelos").rows.find((row) => row.label === "+ extra");
+  if (extra.progress !== 1) throw new Error(`progress without storage: ${extra.progress}`);
 });
 
 check("a paused extra-usage pool says so instead of showing an expiry", async () => {

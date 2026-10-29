@@ -24,9 +24,10 @@ Current version: **0.0.2**, the single file `nan-usage.ts`. Changes: [CHANGELOG.
   ```
 
   A purchased pool expires on an absolute date instead of on the billing cycle, so it cannot share the model's reset. Its
-  bar is the share of the base cap still covered by extra tokens, inverted because a CodexBar progress is a consumed
-  fraction. A paused pool reads `pausado, requiere membresía activa` with no bar and no expiry; one you are already
-  drawing on after the base cap adds `en uso`.
+  bar is the share of the pool you still hold, so an untouched pool reads full and a drained one empties out. The API
+  only reports what is left, never the pool's original size, so the largest value seen for that expiry is remembered and
+  becomes the size; a new expiry starts a new pool at full. A paused pool reads `pausado, requiere membresía activa` with
+  no bar and no expiry; one you are already drawing on after the base cap adds `en uso`.
 - **The account row** tells you which credential answered (`API key` or `Dashboard session`) and whether the premium
   subscription is active on this account.
 - **Named windows** in the snapshot, so Settings → Plugins → Menu bar metric can pin any single model to the bar,
@@ -86,6 +87,9 @@ revoked key cannot hide behind a stale cookie.
 | --------- | -------- | -------- | ----------------------------------------------------------------- |
 | `API_KEY` | `secure` | No       | NaN API key. Stored by CodexBar, never logged or shown in the UI. |
 
+The plugin also declares the `persistent-storage` capability to remember each extra-usage pool's size, keyed by model and
+expiry date. It stores one number per pool and nothing else.
+
 No other settings. The menu-bar metric picker (Auto, primary, secondary, tertiary or a named model) is the existing
 per-plugin CodexBar control, not a plugin setting.
 
@@ -126,10 +130,10 @@ Quota has an 8 s deadline and a `Retry-After` honoured up to 10 s. A shape the p
 node --experimental-strip-types tests/snapshot.test.mjs
 ```
 
-Seventeen checks run against a fake `ctx`: manifest shape, the icon's self-contained SVG, bearer auth, cookie fallback,
+Twenty checks run against a fake `ctx`: manifest shape, the icon's self-contained SVG, bearer auth, cookie fallback,
 the missing-credential message, the absence of a top bar, window ordering, detail rows, the extra-usage row as a sibling
-bar (available, paused and in use), premium labelling, the paid-tier window, rejection handling, and the served-model
-filter with its three fail-open paths. No network and no CodexBar needed.
+bar (full, drained, new expiry, paused, in use, storage unavailable), premium labelling, the paid-tier window, rejection
+handling, and the served-model filter with its three fail-open paths. No network and no CodexBar needed.
 
 ## Versioning
 

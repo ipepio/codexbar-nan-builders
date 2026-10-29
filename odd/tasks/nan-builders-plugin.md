@@ -49,6 +49,12 @@ reset. The user's exact words: "el extra usage que salga como una segunda linea 
 CodexBar detail row carries one bar, so the pool becomes a sibling row labelled `+ extra` placed directly below the
 model, carrying the remaining tokens, the absolute expiry and a consumed-fraction bar derived from `extra / cap`.
 
+S13. The extra-usage bar must read as the share of the pool still held: an untouched pool is full. The user's exact
+words: "en mi caso, no he consumido nada del extra usage, la barra debería de salir entera, no?". Because the payload
+reports only `extraTokens` (what is left, never the original size), the largest value seen for a given expiry is
+remembered through the `persistent-storage` capability and becomes the pool's size. A new `extraExpiresAt` starts a new
+pool at full, and an unavailable store degrades to a full bar rather than to an error.
+
 ## Tasks
 
 | ID | Specs | Route | Commit |
@@ -62,6 +68,7 @@ model, carrying the remaining tokens, the absolute expiry and a consumed-fractio
 | T7 | S9 | inline | `docs: changelog, released-file install and versioning` + tag `v0.0.1` |
 | T8 | S10, S11 | inline | `feat: drop the aggregate bar and report extra usage` |
 | T9 | S12 | inline | `fix: extra usage as its own bar under the model` |
+| T10 | S13 | inline | `fix: extra-usage bar reads the pool still held` + tag `v0.0.2` |
 
 ## Log
 
@@ -72,6 +79,8 @@ L2. Clarification answers: "Las dos cosas, pero como te autenticas ahora?" (both
 L3. Evidence for API-key authentication: the community Noctalia plugin `cmoro-deusto/nan-usage` documents three GETs to `https://cloud-api.nan.builders` with the key as a bearer token — `/api/usage/quota`, `/api/auth/me`, `/api/metrics/usage`. Independent confirmation that the same origin the cookie path uses also accepts an API key.
 
 L4. Evidence for S5: CodexBar 0.82.0 maps `extraWindows` correctly (`ProviderPluginSnapshotMapper.swift`) but `MenuCardView+ModelHelpers.swift::extraRateWindowMetrics` is only called from `antigravityMetrics`, so named extras never render in the popover for plugins.
+
+L11. "en mi caso, no he consumido nada del extra usage, la barra debería de salir entera, no? solventemos esto y ya sacamos tag 0.0.2 y release" — authorises T10, the tag `v0.0.2` and its release.
 
 L10. "el extra usage que salga como una segunda linea dentro del mismo modelo. podemos?" — answered by T9.
 
