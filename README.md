@@ -6,6 +6,8 @@ window resets.
 
 [![Built with NaN](https://nan.builders/badge/built-with-nan-compact.svg)](https://nan.builders/?ref=built-with-nan)
 
+Current version: **0.0.1**, the single file `nan-usage.ts`. Changes: [CHANGELOG.md](CHANGELOG.md).
+
 <p align="center"><img src="assets/nan-isotipo-color.png" alt="NaN isotipo" width="120"></p>
 
 ## What it shows
@@ -37,6 +39,14 @@ blanking the card.
 git clone https://github.com/ipepio/codexbar-nan-builders.git
 mkdir -p ~/.config/codexbar/providers
 cp codexbar-nan-builders/nan-usage.ts ~/.config/codexbar/providers/
+```
+
+Or download the released file directly, without cloning:
+
+```bash
+mkdir -p ~/.config/codexbar/providers
+curl -fsSL https://raw.githubusercontent.com/ipepio/codexbar-nan-builders/v0.0.1/nan-usage.ts \
+  -o ~/.config/codexbar/providers/nan-usage.ts
 ```
 
 Then open **Settings → Plugins**, approve `nan-usage` when CodexBar lists it, and set the API key (see below).
@@ -106,6 +116,12 @@ node --experimental-strip-types tests/snapshot.test.mjs
 Fourteen checks run against a fake `ctx`: manifest shape, the icon's self-contained SVG, bearer auth, cookie fallback,
 the missing-credential message, window ordering, detail rows, premium labelling, the paid-tier window, rejection
 handling, and the served-model filter with its three fail-open paths. No network and no CodexBar needed.
+
+## Versioning
+
+Each tag is a release of `nan-usage.ts`. Copying the file over an older one is the upgrade path; there is nothing to
+build and no state to migrate. Re-approve the plugin in CodexBar whenever the manifest changed, which the approval sheet
+says explicitly when it happens.
 
 ## Notes
 
