@@ -4,6 +4,8 @@ A [CodexBar](https://github.com/steipete/CodexBar) user plugin that shows your [
 subscription quotas in the macOS menu bar: one bar per usable model, the tokens used against the cap, and when each
 window resets.
 
+[![Built with NaN](https://nan.builders/badge/built-with-nan-compact.svg)](https://nan.builders/?ref=built-with-nan)
+
 <p align="center"><img src="assets/nan-isotipo-color.png" alt="NaN isotipo" width="120"></p>
 
 ## What it shows
