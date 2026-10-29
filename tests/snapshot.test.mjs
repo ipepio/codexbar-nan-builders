@@ -31,7 +31,25 @@ const premiumQuota = {
   ],
 };
 
-function makeCtx({ key = null, cookieHeader = null, billing = freeBilling, quotaStatus = 200, body = quota } = {}) {
+const servedIDs = ["oven-3.8-flash", "deepseek-v4-flash", "xiaomi-mimo-v2.6-flash", "glm5.3", "glm5.3-flash"];
+
+const retiredQuota = {
+  periodStart: "2026-10-01",
+  models: [
+    { model: "Oven 3.8 Flash", cap: 500_000_000, tokensUsed: 321_700_000, periodEnd: "2026-11-01" },
+    { model: "GLM 5.2", cap: 1_000_000_000, tokensUsed: 0, periodEnd: "2026-11-01" },
+  ],
+};
+
+function makeCtx({
+  key = null,
+  cookieHeader = null,
+  billing = freeBilling,
+  quotaStatus = 200,
+  body = quota,
+  models = servedIDs,
+  modelsStatus = 200,
+} = {}) {
   const calls = [];
   return {
     calls,
@@ -55,6 +73,11 @@ function makeCtx({ key = null, cookieHeader = null, billing = freeBilling, quota
         calls.push({ url, headers: options.headers ?? {} });
         if (url.endsWith("/api/usage/quota")) {
           return { status: quotaStatus, headers: {}, bodyText: JSON.stringify(body) };
+        }
+        if (url.endsWith("/v1/models")) {
+          if (modelsStatus !== 200) return { status: modelsStatus, headers: {}, bodyText: "" };
+          const data = models.map((id) => ({ id }));
+          return { status: 200, headers: {}, bodyText: JSON.stringify({ data }) };
         }
         if (url.endsWith("/api/billing")) {
           return billing
@@ -223,6 +246,40 @@ check("a rejected key names the key, a rejected cookie names the session", async
   }
   if (cookieError?.kind !== "authenticationExpired") throw new Error(`cookie kind ${cookieError?.kind}`);
   if (!cookieCtx.calls.some((call) => call.reject)) throw new Error("rejected cookie was not evicted");
+});
+
+check("a retired model is dropped when the served list disagrees", async () => {
+  const ctx = makeCtx({ key: "sk-test", body: retiredQuota });
+  const snapshot = await manifest.fetchUsage(ctx);
+  const quotaCall = ctx.calls.find((call) => call.url.endsWith("/v1/models"));
+  if (!quotaCall) throw new Error("the served list was never requested");
+  if (quotaCall.headers.Authorization !== "Bearer sk-test") throw new Error("served list sent without the key");
+  const titles = [snapshot.primary, ...(snapshot.extraWindows ?? [])].map((window) => window.title);
+  if (titles.includes("GLM 5.2")) throw new Error(`retired model kept: ${JSON.stringify(titles)}`);
+  const rows = (snapshot.details ?? []).find((entry) => entry.title === "Modelos").rows.map((row) => row.label);
+  if (rows.includes("GLM 5.2")) throw new Error(`retired model kept in details: ${JSON.stringify(rows)}`);
+  if (!rows.includes("Oven 3.8 Flash")) throw new Error(`served model dropped: ${JSON.stringify(rows)}`);
+});
+
+check("a cookie session keeps the payload as reported, since it cannot ask", async () => {
+  const ctx = makeCtx({ cookieHeader: "session=abc", body: retiredQuota });
+  const snapshot = await manifest.fetchUsage(ctx);
+  if (ctx.calls.some((call) => call.url.endsWith("/v1/models"))) throw new Error("cookie session queried /v1/models");
+  const rows = (snapshot.details ?? []).find((entry) => entry.title === "Modelos").rows.map((row) => row.label);
+  if (!rows.includes("GLM 5.2")) throw new Error(`payload was filtered: ${JSON.stringify(rows)}`);
+});
+
+check("an unreadable served list fails open instead of hiding everything", async () => {
+  const ctx = makeCtx({ key: "sk-test", body: retiredQuota, modelsStatus: 500 });
+  const snapshot = await manifest.fetchUsage(ctx);
+  const rows = (snapshot.details ?? []).find((entry) => entry.title === "Modelos").rows.map((row) => row.label);
+  if (!rows.includes("GLM 5.2")) throw new Error(`rows: ${JSON.stringify(rows)}`);
+});
+
+check("a naming disagreement fails open rather than blanking the card", async () => {
+  const ctx = makeCtx({ key: "sk-test", body: retiredQuota, models: ["something-else-entirely"] });
+  const snapshot = await manifest.fetchUsage(ctx);
+  if (!snapshot.primary) throw new Error("every model was dropped");
 });
 
 let failed = 0;

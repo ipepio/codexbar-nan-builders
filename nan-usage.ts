@@ -7,6 +7,7 @@
 // Authentication is the NaN API key when one is configured, and the nan.builders dashboard cookies
 // otherwise. Both hit the same origin: cloud-api.nan.builders.
 const NAN_API = "https://cloud-api.nan.builders";
+const NAN_INFERENCE_API = "https://api.nan.builders";
 const NAN_DASHBOARD = "https://cloud.nan.builders";
 const NAN_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><path d="M 458.3 134.1 Q 512.0 103.1 565.7 134.1 L 812.4 276.6 Q 866.1 307.6 866.1 369.6 L 866.1 654.5 Q 866.1 716.5 812.4 747.5 L 565.7 889.9 Q 512.0 920.9 458.3 889.9 L 211.6 747.5 Q 157.9 716.5 157.9 654.5 L 157.9 369.5 Q 157.9 307.5 211.6 276.5 Z" fill="none" stroke="#4934E1" stroke-width="46"/><path d="M 780.0 512.0 C 780.0 542.9 762.5 584.3 744.7 604.6 C 726.9 624.9 696.1 632.9 673.1 634.0 C 650.2 635.1 626.8 622.7 607.2 611.2 C 587.6 599.8 571.4 581.8 555.5 565.3 C 539.6 548.7 526.5 529.8 512.0 512.0 C 497.5 494.2 484.4 475.3 468.5 458.7 C 452.6 442.2 436.4 424.2 416.8 412.8 C 397.2 401.3 373.8 388.9 350.9 390.0 C 327.9 391.1 297.1 399.1 279.3 419.4 C 261.5 439.7 244.0 481.1 244.0 512.0 C 244.0 542.9 261.5 584.3 279.3 604.6 C 297.1 624.9 327.9 632.9 350.9 634.0 C 373.8 635.1 397.2 622.7 416.8 611.2 C 436.4 599.8 452.6 581.8 468.5 565.3 C 484.4 548.7 497.5 529.8 512.0 512.0 C 526.5 494.2 539.6 475.3 555.5 458.7 C 571.4 442.2 587.6 424.2 607.2 412.8 C 626.8 401.3 650.2 388.9 673.1 390.0 C 696.1 391.1 726.9 399.1 744.7 419.4 C 762.5 439.7 780.0 481.1 780.0 512.0 Z" fill="none" stroke="#4934E1" stroke-width="64"/></svg>`;
 
@@ -29,7 +30,7 @@ defineProvider({
   id: "nan-usage",
   name: "NaN Builders",
   icon: { monogram: "NaN", tint: "#4934E1", svg: NAN_MARK },
-  endpoints: [NAN_API],
+  endpoints: [NAN_API, NAN_INFERENCE_API],
   settings: [
     {
       key: "API_KEY",
@@ -55,6 +56,18 @@ defineProvider({
         void error;
         return fail("invalid JSON");
       }
+    };
+    // Quota rows carry display names ("GLM 5.3 Flash") while /v1/models carries ids
+    // ("glm5.3-flash"), so both sides are compared with punctuation and case removed.
+    const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const matchesServed = (name: string, served: Set<string>): boolean => {
+      const candidate = normalize(name);
+      if (candidate.length === 0) return true;
+      for (const id of served) {
+        if (id === candidate || id.endsWith(candidate) || candidate.endsWith(id)) return true;
+        if (id.length >= 5 && candidate.length >= 5 && (candidate.includes(id) || id.includes(candidate))) return true;
+      }
+      return false;
     };
     const integer = (value: unknown, field: string): number => {
       if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return fail(field);
@@ -122,6 +135,29 @@ defineProvider({
         start && Number(start[2]) >= 1 && Number(start[2]) <= 12 && Number(start[3]) >= 1 && Number(start[3]) <= 31
           ? new Date(Date.UTC(Number(start[1]), Number(start[2]), 1))
           : undefined;
+      // A retired model can outlive its dashboard listing inside the quota payload. /v1/models is
+      // the authoritative list of what the cluster serves today, but it needs the API key: a cookie
+      // session cannot ask, so it keeps the payload exactly as reported.
+      const servedModels = async (): Promise<Set<string> | undefined> => {
+        try {
+          const result = await ctx.http.get(`${NAN_INFERENCE_API}/v1/models`, {
+            headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+            timeoutSeconds: 4,
+          });
+          if (result.status !== 200) return undefined;
+          const body = object(JSON.parse(result.bodyText));
+          const data = body?.data;
+          if (!Array.isArray(data)) return undefined;
+          const ids = data
+            .map((entry: unknown) => object(entry)?.id)
+            .filter((id): id is string => typeof id === "string" && id.length > 0)
+            .map(normalize);
+          return ids.length > 0 ? new Set(ids) : undefined;
+        } catch (error) {
+          void error;
+          return undefined;
+        }
+      };
       const models: ModelRow[] = quota.models.map((value: unknown) => {
         const row = object(value) ?? fail("model");
         if (typeof row.model !== "string" || !ctx.isDetailLabel(row.model)) return fail("model name");
@@ -141,6 +177,11 @@ defineProvider({
         return { name: row.model, cap, used, credit, hours, resetsAt };
       });
 
+      const served = credential.method === "API key" ? await servedModels() : undefined;
+      const filtered = served === undefined ? models : models.filter((row) => matchesServed(row.name, served));
+      // Fail open: an empty result means the two naming schemes disagreed, not that nothing is left.
+      const visible = filtered.length > 0 ? filtered : models;
+
       // A rolling tier is a paid add-on the account may not hold, and a zero cap is no allowance at
       // all: neither is a measured percentage, so both are reported instead of drawn.
       const usable = (row: ModelRow): boolean => row.cap > 0 && (row.hours === undefined || premium);
@@ -150,7 +191,7 @@ defineProvider({
       const percent = (row: ModelRow): number => ctx.pct(row.used, row.cap);
       const byUsage = (a: ModelRow, b: ModelRow): number =>
         percent(b) - percent(a) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-      const windows = models
+      const windows = visible
         .filter(usable)
         .sort(byUsage)
         .map((row) => ({
@@ -179,7 +220,7 @@ defineProvider({
       // CodexBar renders named extra windows in the popover only for Antigravity, so the per-model
       // breakdown travels as detail rows, which every provider card renders. extraWindows stay in
       // the snapshot for the menu-bar metric picker, widgets and quota warnings.
-      const breakdown = [...models].sort((a, b) => {
+      const breakdown = [...visible].sort((a, b) => {
         const aUsable = usable(a) ? 1 : 0;
         const bUsable = usable(b) ? 1 : 0;
         return aUsable !== bUsable ? bUsable - aUsable : byUsage(a, b);
