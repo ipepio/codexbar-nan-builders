@@ -21,6 +21,12 @@ S5. The popover card must show one bar per usable model. Because CodexBar render
 
 S6. The plugin icon must use the NaN isotipo supplied at `~/Downloads/nan-isotipo-color.png`, expressed as an inline monochrome SVG that satisfies CodexBar's icon rules (no raster, no styles, no `url()`, only `svg`/`path`/`g`/`circle`/`rect`/`polygon` with plain geometry, fill and stroke attributes).
 
+S8. A model the cluster no longer serves must not linger in the card. When an API key is configured, the plugin must
+cross-check every quota row against `https://api.nan.builders/v1/models` and drop the rows whose model is not served.
+The check must fail open: an unreadable list, a non-200 answer, or a naming disagreement between the two surfaces keeps
+the payload as reported instead of blanking the card. A cookie session cannot authenticate that endpoint, so it keeps
+the payload whole. The user's exact words: "por que sale glm 5.2? pregunto".
+
 S7. The repository must document installation, authentication, every setting, the API contract it depends on, and troubleshooting, so a new user can go from clone to visible quota without reading the source.
 
 ## Tasks
@@ -32,6 +38,7 @@ S7. The repository must document installation, authentication, every setting, th
 | T3 | S6 | inline | `feat: use the NaN isotipo as the plugin icon` |
 | T4 | S7 | inline | `docs: installation, authentication and API contract` |
 | T5 | — | inline | `test: offline snapshot harness` + publish |
+| T6 | S8 | inline | `feat: drop retired models against the served list` |
 
 ## Log
 
@@ -42,5 +49,7 @@ L2. Clarification answers: "Las dos cosas, pero como te autenticas ahora?" (both
 L3. Evidence for API-key authentication: the community Noctalia plugin `cmoro-deusto/nan-usage` documents three GETs to `https://cloud-api.nan.builders` with the key as a bearer token — `/api/usage/quota`, `/api/auth/me`, `/api/metrics/usage`. Independent confirmation that the same origin the cookie path uses also accepts an API key.
 
 L4. Evidence for S5: CodexBar 0.82.0 maps `extraWindows` correctly (`ProviderPluginSnapshotMapper.swift`) but `MenuCardView+ModelHelpers.swift::extraRateWindowMetrics` is only called from `antigravityMetrics`, so named extras never render in the popover for plugins.
+
+L6. "si, dale" — authorises T6 as proposed: filter against `/v1/models` when an API key is configured, and keep the payload as reported for cookie sessions with the behaviour documented.
 
 L5. Evidence for S4: `nan.builders/docs/models` currently lists only `glm5.3` and `glm5.3-flash`; GLM 5.3 is described as premium-tier, callable only with a key on the GLM 5.3 premium membership, 3,000M tokens per member plus a 400M per rolling 4-hour window.

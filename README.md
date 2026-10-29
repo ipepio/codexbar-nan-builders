@@ -18,8 +18,11 @@ window resets.
 - **Named windows** in the snapshot, so Settings → Plugins → Menu bar metric can pin any single model to the bar,
   and widgets and quota warnings can use them.
 
-Models the API no longer returns simply disappear: the plugin keeps no retirement list of its own. A retired model
-such as GLM 5.2 stops appearing the moment NaN stops reporting it.
+A model the cluster no longer serves is dropped instead of lingering: with an API key the plugin cross-checks every
+quota row against the authoritative model list at `api.nan.builders/v1/models`, so a retired model such as GLM 5.2
+disappears even while the quota endpoint still reports it. No retirement list is hardcoded anywhere, and the check fails
+open — an unreadable list, or a naming difference between the two endpoints, keeps the payload as reported rather than
+blanking the card.
 
 ## Requirements
 
@@ -74,6 +77,12 @@ token or the dashboard `Cookie`, plus the `Origin` and `Referer` of `https://clo
 | `/api/usage/quota`  | Yes      | `periodStart` and `models[]` with `model`, `cap`, `tokensUsed`, `creditTokens`, `windowHours`, `periodEnd`. |
 | `/api/billing`      | No       | `subscription.premium`, which decides whether a rolling premium tier is a quota you hold. Best effort, 2 s deadline; its failure can only hide a tier, never invent one. |
 
+With an API key the plugin also asks the inference host for the served model list, which is what removes retired models:
+
+| Endpoint                              | Required | Purpose                                                          |
+| ------------------------------------- | -------- | ---------------------------------------------------------------- |
+| `api.nan.builders/v1/models`          | No       | `data[].id` of the models the cluster serves today. API key only, 4 s deadline, best effort; a cookie session never asks, and any failure keeps the quota payload whole. |
+
 Quota has an 8 s deadline and a `Retry-After` honoured up to 10 s. A shape the plugin cannot read fails loudly as
 `NaN Builders quota response format changed`, which is deliberate: this contract is unversioned.
 
@@ -86,6 +95,7 @@ Quota has an 8 s deadline and a `Retry-After` honoured up to 10 s. A shape the p
 | `NaN Builders rejected the API key` | Revoked or mistyped key. Generate a new one in the platform; the plugin does not fall back to cookies on purpose. |
 | `Add a NaN API key…` | No key and no `nan.builders` browser session. Either one is enough. |
 | `Requiere suscripción Plus` | The account lacks the premium subscription, so that tier's window is not a measured quota. |
+| A retired model still listed | No API key configured, so `/v1/models` could not be consulted. Add the key to get the cross-check. |
 
 ## Development
 
@@ -93,9 +103,9 @@ Quota has an 8 s deadline and a `Retry-After` honoured up to 10 s. A shape the p
 node --experimental-strip-types tests/snapshot.test.mjs
 ```
 
-Ten checks run against a fake `ctx`: manifest shape, the icon's self-contained SVG, bearer auth, cookie fallback, the
-missing-credential message, window ordering, detail rows, premium labelling, the paid-tier window, and rejection
-handling. No network and no CodexBar needed.
+Fourteen checks run against a fake `ctx`: manifest shape, the icon's self-contained SVG, bearer auth, cookie fallback,
+the missing-credential message, window ordering, detail rows, premium labelling, the paid-tier window, rejection
+handling, and the served-model filter with its three fail-open paths. No network and no CodexBar needed.
 
 ## Notes
 
