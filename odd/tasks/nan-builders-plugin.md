@@ -33,6 +33,17 @@ S9. Every released change must be described in a CHANGELOG entry and reachable f
 correspond to a downloadable `nan-usage.ts` so a user can install or upgrade with one `curl`. The user's exact words:
 "actualiza toda la doc y pushea please. saca tag y release 0.0.1".
 
+S10. The card must not carry an aggregate percentage bar. The user's exact words: "en NaN no tiene sentido tener un
+contador de % total, porque ya tienes los modelos abajo. entonces tienes cuando se reinicia". The chosen resolution was
+"Quitar la barra de arriba del todo", so no primary, secondary or tertiary window is published, every model keeps its
+reset on its own row, and the menu-bar percentage requires a pinned model. That consequence must be documented.
+
+S11. A purchased extra-usage pool must be reported on its own terms, because it expires on an absolute date instead of
+on the billing cycle. The fields come from the dashboard bundle, which is authoritative: `extraTokens` (remaining),
+`extraExpiresAt`, `extraUsable`. A pool with `extraUsable === false` reads as paused and shows no expiry, mirroring the
+dashboard's "paused - requires premium/an active membership"; a pool drawn on after the base cap reads "en uso",
+mirroring "using extra". No percentage may be inferred for it.
+
 ## Tasks
 
 | ID | Specs | Route | Commit |
@@ -44,6 +55,7 @@ correspond to a downloadable `nan-usage.ts` so a user can install or upgrade wit
 | T5 | — | inline | `test: offline snapshot harness` + publish |
 | T6 | S8 | inline | `feat: drop retired models against the served list` |
 | T7 | S9 | inline | `docs: changelog, released-file install and versioning` + tag `v0.0.1` |
+| T8 | S10, S11 | inline | `feat: drop the aggregate bar and report extra usage` |
 
 ## Log
 
@@ -54,6 +66,12 @@ L2. Clarification answers: "Las dos cosas, pero como te autenticas ahora?" (both
 L3. Evidence for API-key authentication: the community Noctalia plugin `cmoro-deusto/nan-usage` documents three GETs to `https://cloud-api.nan.builders` with the key as a bearer token — `/api/usage/quota`, `/api/auth/me`, `/api/metrics/usage`. Independent confirmation that the same origin the cookie path uses also accepts an API key.
 
 L4. Evidence for S5: CodexBar 0.82.0 maps `extraWindows` correctly (`ProviderPluginSnapshotMapper.swift`) but `MenuCardView+ModelHelpers.swift::extraRateWindowMetrics` is only called from `antigravityMetrics`, so named extras never render in the popover for plugins.
+
+L8. "quizá metería un pequeño cambio ahora, ... en NaN no tiene sentido tener un contador de % total, porque ya tienes los modelos abajo. entonces tienes cuando se reinicia. Y después, se que tienes tokens de extra usage, que tienen otra caducidad. como podemos tenerlos en cuenta?" — answered with "Quitar la barra de arriba del todo" for the layout, and with a screenshot of the extra-usage row for the second part.
+
+L9. Evidence for S11: `cloud.nan.builders/assets/index-CebVCPif.js` renders `+{extraTokens} left · {expires ...}` from
+`extraTokens`, `extraExpiresAt` and `extraUsable`, and swaps to "paused - requires ..." and "using extra" in the two
+edge cases.
 
 L7. "actualiza toda la doc y pushea please. saca tag y release 0.0.1" — authorises the documentation pass, the push, and the annotated tag `v0.0.1` with its GitHub release.
 

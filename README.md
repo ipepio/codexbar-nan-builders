@@ -6,15 +6,19 @@ window resets.
 
 [![Built with NaN](https://nan.builders/badge/built-with-nan-compact.svg)](https://nan.builders/?ref=built-with-nan)
 
-Current version: **0.0.1**, the single file `nan-usage.ts`. Changes: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.0.2**, the single file `nan-usage.ts`. Changes: [CHANGELOG.md](CHANGELOG.md).
 
 <p align="center"><img src="assets/nan-isotipo-color.png" alt="NaN isotipo" width="120"></p>
 
 ## What it shows
 
-- **One bar per usable model**, ordered by how full it is, with the reset countdown.
-- **A per-model breakdown** in the popover card: tokens used against the cap, and an explicit label for models you
-  cannot use (`Requiere suscripción Plus`, `No incluido en tu plan`) instead of a fake percentage.
+- **No aggregate bar.** The card lists every model directly, so there is no top percentage duplicating the first row.
+  Each model row carries its own reset and, when you bought one, its extra-usage pool.
+- **A per-model breakdown** in the popover card: tokens used against the cap, the reset date, and an explicit label for
+  models you cannot use (`Requiere suscripción Plus`, `No incluido en tu plan`) instead of a fake percentage.
+- **Extra usage** is shown on its own terms: `+125M extra · caduca 29 abr 2027`, because a purchased pool expires on an
+  absolute date instead of on the billing cycle. A paused pool reads `pausado, requiere membresía activa`, and one you
+  are already drawing on reads `en uso`.
 - **The account row** tells you which credential answered (`API key` or `Dashboard session`) and whether the premium
   subscription is active on this account.
 - **Named windows** in the snapshot, so Settings → Plugins → Menu bar metric can pin any single model to the bar,
@@ -45,7 +49,7 @@ Or download the released file directly, without cloning:
 
 ```bash
 mkdir -p ~/.config/codexbar/providers
-curl -fsSL https://raw.githubusercontent.com/ipepio/codexbar-nan-builders/v0.0.1/nan-usage.ts \
+curl -fsSL https://raw.githubusercontent.com/ipepio/codexbar-nan-builders/v0.0.2/nan-usage.ts \
   -o ~/.config/codexbar/providers/nan-usage.ts
 ```
 
@@ -84,7 +88,7 @@ token or the dashboard `Cookie`, plus the `Origin` and `Referer` of `https://clo
 
 | Endpoint            | Required | Purpose                                                                    |
 | ------------------- | -------- | -------------------------------------------------------------------------- |
-| `/api/usage/quota`  | Yes      | `periodStart` and `models[]` with `model`, `cap`, `tokensUsed`, `creditTokens`, `windowHours`, `periodEnd`. |
+| `/api/usage/quota`  | Yes      | `periodStart` and `models[]` with `model`, `cap`, `tokensUsed`, `windowHours`, `periodEnd`, plus `extraTokens`, `extraUsable` and `extraExpiresAt` for a purchased extra-usage pool. |
 | `/api/billing`      | No       | `subscription.premium`, which decides whether a rolling premium tier is a quota you hold. Best effort, 2 s deadline; its failure can only hide a tier, never invent one. |
 
 With an API key the plugin also asks the inference host for the served model list, which is what removes retired models:
@@ -106,6 +110,7 @@ Quota has an 8 s deadline and a `Retry-After` honoured up to 10 s. A shape the p
 | `Add a NaN API key…` | No key and no `nan.builders` browser session. Either one is enough. |
 | `Requiere suscripción Plus` | The account lacks the premium subscription, so that tier's window is not a measured quota. |
 | A retired model still listed | No API key configured, so `/v1/models` could not be consulted. Add the key to get the cross-check. |
+| No percentage in the menu bar | By design: with no aggregate bar, Auto has no window to read. Pin a model in Settings → Plugins → Menu bar metric. |
 
 ## Development
 
@@ -113,9 +118,10 @@ Quota has an 8 s deadline and a `Retry-After` honoured up to 10 s. A shape the p
 node --experimental-strip-types tests/snapshot.test.mjs
 ```
 
-Fourteen checks run against a fake `ctx`: manifest shape, the icon's self-contained SVG, bearer auth, cookie fallback,
-the missing-credential message, window ordering, detail rows, premium labelling, the paid-tier window, rejection
-handling, and the served-model filter with its three fail-open paths. No network and no CodexBar needed.
+Seventeen checks run against a fake `ctx`: manifest shape, the icon's self-contained SVG, bearer auth, cookie fallback,
+the missing-credential message, the absence of a top bar, window ordering, detail rows, reset and extra-usage lines
+(available, paused and in use), premium labelling, the paid-tier window, rejection handling, and the served-model filter
+with its three fail-open paths. No network and no CodexBar needed.
 
 ## Versioning
 

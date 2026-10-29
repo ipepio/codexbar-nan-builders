@@ -3,6 +3,27 @@
 All notable changes to this plugin are recorded here. The version applies to `nan-usage.ts`: replace the file, then
 re-approve the plugin in CodexBar whenever the manifest changes.
 
+## 0.0.2 — unreleased
+
+**Card layout**
+
+- Removed the aggregate top bar. It repeated the first model row, which already carries the same percentage, so the
+  card now starts with the model list.
+- Each model row shows its reset (`reinicia 1 nov`) and its extra-usage pool in the same line.
+- Consequence: with no primary window, the menu-bar percentage has no automatic source. Pin a model in
+  Settings → Plugins → Menu bar metric. Named windows remain in the snapshot for exactly that.
+
+**Extra usage**
+
+- Reads the dashboard's own fields: `extraTokens` (tokens left), `extraExpiresAt` (absolute expiry) and `extraUsable`.
+- Renders `+125M extra · caduca 29 abr 2027`, since a purchased pool does not expire with the billing cycle.
+- Mirrors the dashboard's states: `pausado, requiere membresía activa` when `extraUsable` is false (no expiry shown),
+  and `en uso` once the base cap is spent.
+
+**Verification**
+
+- Seventeen offline checks, including a paused pool, an in-use pool and the harness gaining `format.monthDay`.
+
 ## 0.0.1 — 2026-10-29
 
 First tagged release.
