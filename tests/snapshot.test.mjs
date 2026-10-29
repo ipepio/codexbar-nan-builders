@@ -109,6 +109,8 @@ check("manifest declares one HTTPS origin and a secure API key setting", () => {
 });
 
 check("manifest icon is an inline SVG within the host limits", () => {
+  // 0x4934E1 is Helmcode's brand colour in CodexBar, and NaN shares the Helmcode platform.
+  if (manifest.icon?.tint !== "#4934E1") throw new Error(`tint ${manifest.icon?.tint}`);
   const svg = manifest.icon?.svg ?? "";
   if (!svg.startsWith("<svg")) throw new Error("icon.svg missing");
   if (Buffer.byteLength(svg) > 8 * 1024) throw new Error("icon.svg exceeds 8 KiB");
