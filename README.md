@@ -16,9 +16,17 @@ Current version: **0.0.2**, the single file `nan-usage.ts`. Changes: [CHANGELOG.
   Each model row carries its own reset and, when you bought one, its extra-usage pool.
 - **A per-model breakdown** in the popover card: tokens used against the cap, the reset date, and an explicit label for
   models you cannot use (`Requiere suscripción Plus`, `No incluido en tu plan`) instead of a fake percentage.
-- **Extra usage** is shown on its own terms: `+125M extra · caduca Apr 29 2027`, because a purchased pool expires on an
-  absolute date instead of on the billing cycle. A paused pool reads `pausado, requiere membresía activa`, and one you
-  are already drawing on reads `en uso`.
+- **Extra usage gets its own line and its own bar**, directly under the model it belongs to, mirroring the dashboard:
+
+  ```
+  qwen3.8-flash   321.7M / 500M    reinicia Nov 1
+  + extra         125M restantes · caduca Apr 29 2027
+  ```
+
+  A purchased pool expires on an absolute date instead of on the billing cycle, so it cannot share the model's reset. Its
+  bar is the share of the base cap still covered by extra tokens, inverted because a CodexBar progress is a consumed
+  fraction. A paused pool reads `pausado, requiere membresía activa` with no bar and no expiry; one you are already
+  drawing on after the base cap adds `en uso`.
 - **The account row** tells you which credential answered (`API key` or `Dashboard session`) and whether the premium
   subscription is active on this account.
 - **Named windows** in the snapshot, so Settings → Plugins → Menu bar metric can pin any single model to the bar,
@@ -119,9 +127,9 @@ node --experimental-strip-types tests/snapshot.test.mjs
 ```
 
 Seventeen checks run against a fake `ctx`: manifest shape, the icon's self-contained SVG, bearer auth, cookie fallback,
-the missing-credential message, the absence of a top bar, window ordering, detail rows, reset and extra-usage lines
-(available, paused and in use), premium labelling, the paid-tier window, rejection handling, and the served-model filter
-with its three fail-open paths. No network and no CodexBar needed.
+the missing-credential message, the absence of a top bar, window ordering, detail rows, the extra-usage row as a sibling
+bar (available, paused and in use), premium labelling, the paid-tier window, rejection handling, and the served-model
+filter with its three fail-open paths. No network and no CodexBar needed.
 
 ## Versioning
 

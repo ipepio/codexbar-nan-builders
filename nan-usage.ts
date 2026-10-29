@@ -253,31 +253,45 @@ defineProvider({
         const reset = day(row.resetsAt);
         return reset === undefined ? undefined : `reinicia ${reset}`;
       };
-      const extraLine = (row: ModelRow): string | undefined => {
+
+      // The dashboard draws the extra pool as its own bar under the base one, and CodexBar gives a
+      // row a single bar, so the pool becomes a sibling row. Its width is the share of the base cap
+      // still covered by extra tokens, inverted because a CodexBar progress is a consumed fraction.
+      const extraRow = (row: ModelRow): Record<string, unknown> | undefined => {
         if (row.extra <= 0) return undefined;
         const parts: string[] = [];
-        if (!row.extraUsable) parts.push("pausado, requiere membresía activa");
-        else if (row.cap > 0 && row.used >= row.cap) parts.push("en uso");
+        if (!row.extraUsable) {
+          parts.push("pausado, requiere membresía activa");
+        } else {
+          parts.push(`${tokens(row.extra)} restantes`);
+          if (row.cap > 0 && row.used >= row.cap) parts.push("en uso");
+        }
         const expiry = row.extraUsable ? day(row.extraExpiresAt, true) : undefined;
         if (expiry !== undefined) parts.push(`caduca ${expiry}`);
-        return `+${tokens(row.extra)} extra${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""}`;
+        return {
+          label: "+ extra",
+          value: parts.join(" · "),
+          secondaryValue: null,
+          progress:
+            row.extraUsable && row.cap > 0 ? Math.min(1, Math.max(0, 1 - row.extra / row.cap)) : null,
+          usageValue: null,
+        };
       };
 
       const sections: Record<string, unknown>[] = [];
       if (breakdown.length > 0) {
         sections.push({
           title: "Modelos",
-          rows: breakdown.map((row) => {
-            const secondary = [resetLine(row), extraLine(row)]
-              .filter((part): part is string => part !== undefined && part.length > 0)
-              .join(" · ");
-            return {
+          rows: breakdown.flatMap((row) => {
+            const base = {
               label: row.name,
               value: usable(row) ? `${tokens(row.used)} / ${tokens(row.cap)}` : locked(row),
-              secondaryValue: secondary.length > 0 ? secondary : null,
+              secondaryValue: resetLine(row) ?? null,
               progress: usable(row) ? Math.min(1, row.used / row.cap) : null,
               usageValue: usable(row) ? row.used : null,
             };
+            const extra = extraRow(row);
+            return extra === undefined ? [base] : [base, extra];
           }),
         });
       }

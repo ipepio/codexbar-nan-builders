@@ -219,8 +219,8 @@ check("detail rows carry the per-model breakdown the card renders", async () => 
   const snapshot = await manifest.fetchUsage(ctx);
   const section = (snapshot.details ?? []).find((entry) => entry.title === "Modelos");
   if (!section) throw new Error("missing Modelos section");
-  const rows = section.rows.map((row) => row.label);
-  if (rows.length !== 5) throw new Error(`rows: ${JSON.stringify(rows)}`);
+  const rows = section.rows.map((row) => row.label).filter((label) => label !== "+ extra");
+  if (rows.length !== 5) throw new Error(`model rows: ${JSON.stringify(rows)}`);
   const glm = section.rows.find((row) => row.label === "GLM 5.3");
   if (glm.progress !== null) throw new Error("unavailable model drew a progress bar");
   const deepseek = section.rows.find((row) => row.label === "DeepSeek V4-Flash");
@@ -230,15 +230,24 @@ check("detail rows carry the per-model breakdown the card renders", async () => 
   if (rows[rows.length - 1] !== "GLM 5.3") throw new Error("unavailable rows are not last");
 });
 
-check("an extra-usage pool shows its own expiry beside the model", async () => {
+check("an extra-usage pool is its own bar under the model", async () => {
   const ctx = makeCtx({ key: "sk-test" });
   const snapshot = await manifest.fetchUsage(ctx);
-  const oven = (snapshot.details ?? [])
-    .find((entry) => entry.title === "Modelos").rows.find((row) => row.label === "Oven 3.8 Flash");
-  const secondary = oven.secondaryValue ?? "";
-  if (!secondary.includes("+125M extra")) throw new Error(`extra not shown: ${secondary}`);
-  if (!/caduca Apr 29 2027/.test(secondary)) throw new Error(`expiry missing its year: ${secondary}`);
-  if (!secondary.includes("reinicia")) throw new Error(`reset missing: ${secondary}`);
+  const rows = (snapshot.details ?? []).find((entry) => entry.title === "Modelos").rows;
+  const modelIndex = rows.findIndex((row) => row.label === "Oven 3.8 Flash");
+  if (modelIndex < 0) throw new Error("model row missing");
+  const base = rows[modelIndex];
+  const extra = rows[modelIndex + 1];
+  if (extra?.label !== "+ extra") throw new Error(`extra row not directly below: ${extra?.label}`);
+  if (base.value !== "321.7M / 500M") throw new Error(`base value: ${base.value}`);
+  if (!/^reinicia /.test(base.secondaryValue ?? "")) throw new Error(`reset line: ${base.secondaryValue}`);
+  if ((base.secondaryValue ?? "").includes("extra")) throw new Error("the pool leaked into the model line");
+  if (!/^125M restantes/.test(extra.value)) throw new Error(`extra value: ${extra.value}`);
+  if (!/caduca Apr 29 2027/.test(extra.value)) throw new Error(`expiry missing its year: ${extra.value}`);
+  // The pool covers a quarter of the base cap, so a consumed-fraction bar starts at 0.75.
+  if (Math.abs(extra.progress - 0.75) > 1e-9) throw new Error(`extra progress: ${extra.progress}`);
+  const count = rows.filter((row) => row.label === "+ extra").length;
+  if (count !== 1) throw new Error(`only one pool was bought, found ${count} extra rows`);
 });
 
 check("a paused extra-usage pool says so instead of showing an expiry", async () => {
@@ -257,11 +266,13 @@ check("a paused extra-usage pool says so instead of showing an expiry", async ()
       }],
     },
   });
-  const row = (await manifest.fetchUsage(ctx)).details
-    .find((entry) => entry.title === "Modelos").rows[0];
-  const secondary = row.secondaryValue ?? "";
-  if (!secondary.includes("pausado")) throw new Error(`paused state missing: ${secondary}`);
-  if (secondary.includes("caduca")) throw new Error(`expiry shown for a paused pool: ${secondary}`);
+  const rows = (await manifest.fetchUsage(ctx)).details
+    .find((entry) => entry.title === "Modelos").rows;
+  const extra = rows.find((row) => row.label === "+ extra");
+  if (!extra) throw new Error("no extra row");
+  if (!extra.value.includes("pausado")) throw new Error(`paused state missing: ${extra.value}`);
+  if (extra.value.includes("caduca")) throw new Error(`expiry shown for a paused pool: ${extra.value}`);
+  if (extra.progress !== null) throw new Error(`a paused pool drew a bar: ${extra.progress}`);
 });
 
 check("an exhausted base cap marks the extra pool as in use", async () => {
@@ -280,9 +291,9 @@ check("an exhausted base cap marks the extra pool as in use", async () => {
       }],
     },
   });
-  const row = (await manifest.fetchUsage(ctx)).details
-    .find((entry) => entry.title === "Modelos").rows[0];
-  if (!(row.secondaryValue ?? "").includes("en uso")) throw new Error(`in-use marker missing: ${row.secondaryValue}`);
+  const extra = (await manifest.fetchUsage(ctx)).details
+    .find((entry) => entry.title === "Modelos").rows.find((row) => row.label === "+ extra");
+  if (!(extra?.value ?? "").includes("en uso")) throw new Error(`in-use marker missing: ${extra?.value}`);
 });
 
 check("a premium tier is called out as requiring the subscription", async () => {

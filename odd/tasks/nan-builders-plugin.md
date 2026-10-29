@@ -44,6 +44,11 @@ on the billing cycle. The fields come from the dashboard bundle, which is author
 dashboard's "paused - requires premium/an active membership"; a pool drawn on after the base cap reads "en uso",
 mirroring "using extra". No percentage may be inferred for it.
 
+S12. A purchased extra-usage pool must read as a second line inside its own model, not as text appended to the model's
+reset. The user's exact words: "el extra usage que salga como una segunda linea dentro del mismo modelo. podemos?". A
+CodexBar detail row carries one bar, so the pool becomes a sibling row labelled `+ extra` placed directly below the
+model, carrying the remaining tokens, the absolute expiry and a consumed-fraction bar derived from `extra / cap`.
+
 ## Tasks
 
 | ID | Specs | Route | Commit |
@@ -56,6 +61,7 @@ mirroring "using extra". No percentage may be inferred for it.
 | T6 | S8 | inline | `feat: drop retired models against the served list` |
 | T7 | S9 | inline | `docs: changelog, released-file install and versioning` + tag `v0.0.1` |
 | T8 | S10, S11 | inline | `feat: drop the aggregate bar and report extra usage` |
+| T9 | S12 | inline | `fix: extra usage as its own bar under the model` |
 
 ## Log
 
@@ -66,6 +72,8 @@ L2. Clarification answers: "Las dos cosas, pero como te autenticas ahora?" (both
 L3. Evidence for API-key authentication: the community Noctalia plugin `cmoro-deusto/nan-usage` documents three GETs to `https://cloud-api.nan.builders` with the key as a bearer token — `/api/usage/quota`, `/api/auth/me`, `/api/metrics/usage`. Independent confirmation that the same origin the cookie path uses also accepts an API key.
 
 L4. Evidence for S5: CodexBar 0.82.0 maps `extraWindows` correctly (`ProviderPluginSnapshotMapper.swift`) but `MenuCardView+ModelHelpers.swift::extraRateWindowMetrics` is only called from `antigravityMetrics`, so named extras never render in the popover for plugins.
+
+L10. "el extra usage que salga como una segunda linea dentro del mismo modelo. podemos?" — answered by T9.
 
 L8. "quizá metería un pequeño cambio ahora, ... en NaN no tiene sentido tener un contador de % total, porque ya tienes los modelos abajo. entonces tienes cuando se reinicia. Y después, se que tienes tokens de extra usage, que tienen otra caducidad. como podemos tenerlos en cuenta?" — answered with "Quitar la barra de arriba del todo" for the layout, and with a screenshot of the extra-usage row for the second part.
 

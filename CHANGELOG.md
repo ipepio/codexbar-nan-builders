@@ -9,15 +9,22 @@ re-approve the plugin in CodexBar whenever the manifest changes.
 
 - Removed the aggregate top bar. It repeated the first model row, which already carries the same percentage, so the
   card now starts with the model list.
-- Each model row shows its reset (`reinicia 1 nov`) and its extra-usage pool in the same line.
+- Each model row shows its own reset (`reinicia Nov 1`).
 - Consequence: with no primary window, the menu-bar percentage has no automatic source. Pin a model in
   Settings → Plugins → Menu bar metric. Named windows remain in the snapshot for exactly that.
 
 **Extra usage**
 
 - Reads the dashboard's own fields: `extraTokens` (tokens left), `extraExpiresAt` (absolute expiry) and `extraUsable`.
-- Renders `+125M extra · caduca Apr 29 2027`, since a purchased pool does not expire with the billing cycle.
-  The host's `monthDay` drops the year, so the pool's line appends it: a pool can outlive the current year.
+- The pool is a sibling row directly under its model, with its own bar, instead of text appended to the model line:
+
+  ```
+  qwen3.8-flash   321.7M / 500M         reinicia Nov 1
+  + extra         125M restantes · caduca Apr 29 2027
+  ```
+
+  A purchased pool does not expire with the billing cycle, so it cannot share that reset. The host's `monthDay` drops the
+  year, so the pool's line appends it: a pool can outlive the current year. A paused pool has no bar and no expiry.
 - Mirrors the dashboard's states: `pausado, requiere membresía activa` when `extraUsable` is false (no expiry shown),
   and `en uso` once the base cap is spent.
 
