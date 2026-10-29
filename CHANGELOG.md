@@ -16,7 +16,8 @@ re-approve the plugin in CodexBar whenever the manifest changes.
 **Extra usage**
 
 - Reads the dashboard's own fields: `extraTokens` (tokens left), `extraExpiresAt` (absolute expiry) and `extraUsable`.
-- Renders `+125M extra · caduca 29 abr 2027`, since a purchased pool does not expire with the billing cycle.
+- Renders `+125M extra · caduca Apr 29 2027`, since a purchased pool does not expire with the billing cycle.
+  The host's `monthDay` drops the year, so the pool's line appends it: a pool can outlive the current year.
 - Mirrors the dashboard's states: `pausado, requiere membresía activa` when `extraUsable` is false (no expiry shown),
   and `en uso` once the base cap is spent.
 

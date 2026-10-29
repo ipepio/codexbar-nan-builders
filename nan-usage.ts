@@ -211,10 +211,13 @@ defineProvider({
             : value >= 1e3
               ? `${(value / 1e3).toFixed(1).replace(/\.0$/, "")}K`
               : String(value);
-      const day = (value: Date | undefined): string | undefined => {
+      const day = (value: Date | undefined, withYear = false): string | undefined => {
         if (value === undefined) return undefined;
         try {
-          return ctx.format.monthDay(value);
+          const monthDay = ctx.format.monthDay(value);
+          // The host formats "Apr 29" and drops the year, which is ambiguous for an extra-usage
+          // pool that can expire more than a year out.
+          return withYear ? `${monthDay} ${value.getFullYear()}` : monthDay;
         } catch (error) {
           void error;
           return undefined;
@@ -255,7 +258,7 @@ defineProvider({
         const parts: string[] = [];
         if (!row.extraUsable) parts.push("pausado, requiere membresía activa");
         else if (row.cap > 0 && row.used >= row.cap) parts.push("en uso");
-        const expiry = row.extraUsable ? day(row.extraExpiresAt) : undefined;
+        const expiry = row.extraUsable ? day(row.extraExpiresAt, true) : undefined;
         if (expiry !== undefined) parts.push(`caduca ${expiry}`);
         return `+${tokens(row.extra)} extra${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""}`;
       };

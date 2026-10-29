@@ -16,7 +16,7 @@ Current version: **0.0.2**, the single file `nan-usage.ts`. Changes: [CHANGELOG.
   Each model row carries its own reset and, when you bought one, its extra-usage pool.
 - **A per-model breakdown** in the popover card: tokens used against the cap, the reset date, and an explicit label for
   models you cannot use (`Requiere suscripción Plus`, `No incluido en tu plan`) instead of a fake percentage.
-- **Extra usage** is shown on its own terms: `+125M extra · caduca 29 abr 2027`, because a purchased pool expires on an
+- **Extra usage** is shown on its own terms: `+125M extra · caduca Apr 29 2027`, because a purchased pool expires on an
   absolute date instead of on the billing cycle. A paused pool reads `pausado, requiere membresía activa`, and one you
   are already drawing on reads `en uso`.
 - **The account row** tells you which credential answered (`API key` or `Dashboard session`) and whether the premium

@@ -113,7 +113,9 @@ function makeCtx({
       number: (value) => String(value),
       monthDay: (value) => {
         const date = new Date(value);
-        return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+        if (Number.isNaN(date.getTime())) throw new TypeError("invalid date");
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        return `${months[date.getMonth()]} ${date.getDate()}`;
       },
     },
     pct: (used, limit) => (limit > 0 ? Math.min(100, (used / limit) * 100) : 0),
@@ -235,7 +237,7 @@ check("an extra-usage pool shows its own expiry beside the model", async () => {
     .find((entry) => entry.title === "Modelos").rows.find((row) => row.label === "Oven 3.8 Flash");
   const secondary = oven.secondaryValue ?? "";
   if (!secondary.includes("+125M extra")) throw new Error(`extra not shown: ${secondary}`);
-  if (!secondary.includes("caduca")) throw new Error(`expiry missing: ${secondary}`);
+  if (!/caduca Apr 29 2027/.test(secondary)) throw new Error(`expiry missing its year: ${secondary}`);
   if (!secondary.includes("reinicia")) throw new Error(`reset missing: ${secondary}`);
 });
 
