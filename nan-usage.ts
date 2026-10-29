@@ -21,7 +21,10 @@ type ModelRow = {
   name: string;
   cap: number;
   used: number;
-  credit: number;
+  /** Remaining tokens of the purchased extra-usage pool, which expires on its own date. */
+  extra: number;
+  extraUsable: boolean;
+  extraExpiresAt: Date | undefined;
   hours: number | undefined;
   resetsAt: Date | undefined;
 };
@@ -163,7 +166,8 @@ defineProvider({
         if (typeof row.model !== "string" || !ctx.isDetailLabel(row.model)) return fail("model name");
         const cap = integer(row.cap, "cap");
         const used = integer(row.tokensUsed, "tokensUsed");
-        const credit = row.creditTokens == null ? 0 : integer(row.creditTokens, "creditTokens");
+        const extra = row.extraTokens == null ? 0 : integer(row.extraTokens, "extraTokens");
+        const extraUsable = row.extraUsable !== false;
         const hours = row.windowHours == null ? undefined : integer(row.windowHours, "windowHours");
         if (hours !== undefined && (hours < 1 || hours > 525600 / 60)) return fail("windowHours");
         let resetsAt = fallback;
@@ -174,7 +178,15 @@ defineProvider({
             void error;
           }
         }
-        return { name: row.model, cap, used, credit, hours, resetsAt };
+        let extraExpiresAt: Date | undefined;
+        if (typeof row.extraExpiresAt === "string") {
+          try {
+            extraExpiresAt = ctx.date.iso(row.extraExpiresAt);
+          } catch (error) {
+            void error;
+          }
+        }
+        return { name: row.model, cap, used, extra, extraUsable, extraExpiresAt, hours, resetsAt };
       });
 
       const served = credential.method === "API key" ? await servedModels() : undefined;
@@ -191,6 +203,26 @@ defineProvider({
       const percent = (row: ModelRow): number => ctx.pct(row.used, row.cap);
       const byUsage = (a: ModelRow, b: ModelRow): number =>
         percent(b) - percent(a) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+      const tokens = (value: number): string =>
+        value >= 1e9
+          ? `${(value / 1e9).toFixed(1).replace(/\.0$/, "")}B`
+          : value >= 1e6
+            ? `${(value / 1e6).toFixed(1).replace(/\.0$/, "")}M`
+            : value >= 1e3
+              ? `${(value / 1e3).toFixed(1).replace(/\.0$/, "")}K`
+              : String(value);
+      const day = (value: Date | undefined): string | undefined => {
+        if (value === undefined) return undefined;
+        try {
+          return ctx.format.monthDay(value);
+        } catch (error) {
+          void error;
+          return undefined;
+        }
+      };
+
+      // Named windows stay in the snapshot so Settings → Plugins → Menu bar metric can pin one
+      // model. They are not drawn in the card, which lists every model instead.
       const windows = visible
         .filter(usable)
         .sort(byUsage)
@@ -201,40 +233,49 @@ defineProvider({
             usedPercent: percent(row),
             resetsAt: row.resetsAt,
             windowMinutes: row.hours === undefined ? undefined : row.hours * 60,
-            resetDescription:
-              `${row.name} · ${ctx.format.number(row.used)} / ${ctx.format.number(row.cap)} tokens` +
-              (row.credit > 0 ? ` · ${ctx.format.number(row.credit)} credit-funded` : ""),
+            resetDescription: `${row.name} · ${ctx.format.number(row.used)} / ${ctx.format.number(row.cap)} tokens`,
             title: row.name,
           },
         }));
 
-      const tokens = (value: number): string =>
-        value >= 1e9
-          ? `${(value / 1e9).toFixed(1).replace(/\.0$/, "")}B`
-          : value >= 1e6
-            ? `${(value / 1e6).toFixed(1).replace(/\.0$/, "")}M`
-            : value >= 1e3
-              ? `${(value / 1e3).toFixed(1).replace(/\.0$/, "")}K`
-              : String(value);
-
-      // CodexBar renders named extra windows in the popover only for Antigravity, so the per-model
-      // breakdown travels as detail rows, which every provider card renders. extraWindows stay in
-      // the snapshot for the menu-bar metric picker, widgets and quota warnings.
       const breakdown = [...visible].sort((a, b) => {
         const aUsable = usable(a) ? 1 : 0;
         const bUsable = usable(b) ? 1 : 0;
         return aUsable !== bUsable ? bUsable - aUsable : byUsage(a, b);
       });
+
+      // The base window resets on a billing cycle; a purchased extra-usage pool expires on its own
+      // absolute date, so both belong on the model's row rather than in one shared summary.
+      const resetLine = (row: ModelRow): string | undefined => {
+        const reset = day(row.resetsAt);
+        return reset === undefined ? undefined : `reinicia ${reset}`;
+      };
+      const extraLine = (row: ModelRow): string | undefined => {
+        if (row.extra <= 0) return undefined;
+        const parts: string[] = [];
+        if (!row.extraUsable) parts.push("pausado, requiere membresía activa");
+        else if (row.cap > 0 && row.used >= row.cap) parts.push("en uso");
+        const expiry = row.extraUsable ? day(row.extraExpiresAt) : undefined;
+        if (expiry !== undefined) parts.push(`caduca ${expiry}`);
+        return `+${tokens(row.extra)} extra${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""}`;
+      };
+
       const sections: Record<string, unknown>[] = [];
       if (breakdown.length > 0) {
         sections.push({
           title: "Modelos",
-          rows: breakdown.map((row) => ({
-            label: row.name,
-            value: usable(row) ? `${tokens(row.used)} / ${tokens(row.cap)}` : locked(row),
-            progress: usable(row) ? Math.min(1, row.used / row.cap) : null,
-            usageValue: usable(row) ? row.used : null,
-          })),
+          rows: breakdown.map((row) => {
+            const secondary = [resetLine(row), extraLine(row)]
+              .filter((part): part is string => part !== undefined && part.length > 0)
+              .join(" · ");
+            return {
+              label: row.name,
+              value: usable(row) ? `${tokens(row.used)} / ${tokens(row.cap)}` : locked(row),
+              secondaryValue: secondary.length > 0 ? secondary : null,
+              progress: usable(row) ? Math.min(1, row.used / row.cap) : null,
+              usageValue: usable(row) ? row.used : null,
+            };
+          }),
         });
       }
       if (billing !== undefined) {
@@ -247,9 +288,11 @@ defineProvider({
         });
       }
 
+      // No primary, secondary or tertiary on purpose: the card's top bar repeated the first model
+      // row, and each model row below already carries its own percentage, reset and extra usage.
+      // The menu-bar percentage therefore needs a model pinned in Settings → Plugins.
       return {
-        primary: windows[0]?.window,
-        extraWindows: windows.slice(1),
+        extraWindows: windows,
         details: sections,
         identity: { organization: "NaN Builders", loginMethod: credential.method },
         dataConfidence: "exact",

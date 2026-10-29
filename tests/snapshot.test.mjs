@@ -12,7 +12,15 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const quota = {
   periodStart: "2026-10-01",
   models: [
-    { model: "Oven 3.8 Flash", cap: 500_000_000, tokensUsed: 321_700_000, periodEnd: "2026-11-01" },
+    {
+      model: "Oven 3.8 Flash",
+      cap: 500_000_000,
+      tokensUsed: 321_700_000,
+      extraTokens: 125_000_000,
+      extraUsable: true,
+      extraExpiresAt: "2027-04-29T00:00:00.000Z",
+      periodEnd: "2026-11-01",
+    },
     { model: "DeepSeek V4-Flash", cap: 3_000_000_000, tokensUsed: 1_400_000_000, periodEnd: "2026-11-01" },
     { model: "Xiaomi MiMo V2.6 Flash", cap: 1_000_000_000, tokensUsed: 5_100_000, periodEnd: "2026-11-01" },
     { model: "GLM 5.3", cap: 0, tokensUsed: 0, windowHours: 4, periodEnd: "2026-11-01" },
@@ -101,7 +109,13 @@ function makeCtx({
         return Number.isNaN(parsed.getTime()) ? undefined : parsed;
       },
     },
-    format: { number: (value) => String(value) },
+    format: {
+      number: (value) => String(value),
+      monthDay: (value) => {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+      },
+    },
     pct: (used, limit) => (limit > 0 ? Math.min(100, (used / limit) * 100) : 0),
     isDetailLabel: (value) => typeof value === "string" && value.trim().length > 0,
   };
@@ -177,15 +191,22 @@ check("with neither credential the error names both options", async () => {
   }
 });
 
-check("one bar per usable model, most used first, with named extras", async () => {
+check("no top bar: every usable model is a named window instead", async () => {
   const ctx = makeCtx({ key: "sk-test" });
   const snapshot = await manifest.fetchUsage(ctx);
-  if (Math.abs(snapshot.primary.usedPercent - 64.34) > 0.01) throw new Error(`${snapshot.primary.usedPercent}`);
-  if (snapshot.primary.title !== "Oven 3.8 Flash") throw new Error(snapshot.primary.title);
+  if (snapshot.primary !== undefined) throw new Error("a top bar is still published");
+  if (snapshot.secondary !== undefined || snapshot.tertiary !== undefined) throw new Error("extra top bars published");
   const extras = (snapshot.extraWindows ?? []).map((window) => window.title);
-  if (JSON.stringify(extras) !== JSON.stringify(["DeepSeek V4-Flash", "GLM 5.3 Flash", "Xiaomi MiMo V2.6 Flash"])) {
+  if (JSON.stringify(extras) !== JSON.stringify([
+    "Oven 3.8 Flash",
+    "DeepSeek V4-Flash",
+    "GLM 5.3 Flash",
+    "Xiaomi MiMo V2.6 Flash",
+  ])) {
     throw new Error(`extras: ${JSON.stringify(extras)}`);
   }
+  const worst = snapshot.extraWindows[0].window;
+  if (Math.abs(worst.usedPercent - 64.34) > 0.01) throw new Error(`${worst.usedPercent}`);
   if (snapshot.extraWindows.some((window) => window.title === "GLM 5.3")) {
     throw new Error("a premium tier the account lacks became a measured bar");
   }
@@ -202,8 +223,64 @@ check("detail rows carry the per-model breakdown the card renders", async () => 
   if (glm.progress !== null) throw new Error("unavailable model drew a progress bar");
   const deepseek = section.rows.find((row) => row.label === "DeepSeek V4-Flash");
   if (deepseek.value !== "1.4B / 3B") throw new Error(`value: ${deepseek.value}`);
+  if (!/^reinicia /.test(deepseek.secondaryValue ?? "")) throw new Error(`reset line: ${deepseek.secondaryValue}`);
   if (Math.abs(deepseek.progress - 1_400_000_000 / 3_000_000_000) > 1e-9) throw new Error("progress drift");
   if (rows[rows.length - 1] !== "GLM 5.3") throw new Error("unavailable rows are not last");
+});
+
+check("an extra-usage pool shows its own expiry beside the model", async () => {
+  const ctx = makeCtx({ key: "sk-test" });
+  const snapshot = await manifest.fetchUsage(ctx);
+  const oven = (snapshot.details ?? [])
+    .find((entry) => entry.title === "Modelos").rows.find((row) => row.label === "Oven 3.8 Flash");
+  const secondary = oven.secondaryValue ?? "";
+  if (!secondary.includes("+125M extra")) throw new Error(`extra not shown: ${secondary}`);
+  if (!secondary.includes("caduca")) throw new Error(`expiry missing: ${secondary}`);
+  if (!secondary.includes("reinicia")) throw new Error(`reset missing: ${secondary}`);
+});
+
+check("a paused extra-usage pool says so instead of showing an expiry", async () => {
+  const ctx = makeCtx({
+    key: "sk-test",
+    body: {
+      periodStart: "2026-10-01",
+      models: [{
+        model: "Oven 3.8 Flash",
+        cap: 500_000_000,
+        tokensUsed: 500_000_000,
+        extraTokens: 90_000_000,
+        extraUsable: false,
+        extraExpiresAt: "2027-04-29T00:00:00.000Z",
+        periodEnd: "2026-11-01",
+      }],
+    },
+  });
+  const row = (await manifest.fetchUsage(ctx)).details
+    .find((entry) => entry.title === "Modelos").rows[0];
+  const secondary = row.secondaryValue ?? "";
+  if (!secondary.includes("pausado")) throw new Error(`paused state missing: ${secondary}`);
+  if (secondary.includes("caduca")) throw new Error(`expiry shown for a paused pool: ${secondary}`);
+});
+
+check("an exhausted base cap marks the extra pool as in use", async () => {
+  const ctx = makeCtx({
+    key: "sk-test",
+    body: {
+      periodStart: "2026-10-01",
+      models: [{
+        model: "Oven 3.8 Flash",
+        cap: 500_000_000,
+        tokensUsed: 500_000_000,
+        extraTokens: 120_000_000,
+        extraUsable: true,
+        extraExpiresAt: "2027-04-29T00:00:00.000Z",
+        periodEnd: "2026-11-01",
+      }],
+    },
+  });
+  const row = (await manifest.fetchUsage(ctx)).details
+    .find((entry) => entry.title === "Modelos").rows[0];
+  if (!(row.secondaryValue ?? "").includes("en uso")) throw new Error(`in-use marker missing: ${row.secondaryValue}`);
 });
 
 check("a premium tier is called out as requiring the subscription", async () => {
@@ -220,7 +297,7 @@ check("a premium tier is called out as requiring the subscription", async () => 
 check("a paid account gets the rolling premium window as a real bar", async () => {
   const ctx = makeCtx({ key: "sk-test", billing: premiumBilling, body: premiumQuota });
   const snapshot = await manifest.fetchUsage(ctx);
-  const titles = [snapshot.primary, ...(snapshot.extraWindows ?? [])].map((window) => window.title);
+  const titles = (snapshot.extraWindows ?? []).map((window) => window.title);
   if (!titles.includes("GLM 5.3")) throw new Error(`titles: ${JSON.stringify(titles)}`);
   const glm = snapshot.extraWindows.find((window) => window.title === "GLM 5.3");
   if (glm.window.windowMinutes !== 240) throw new Error(`windowMinutes ${glm.window.windowMinutes}`);
@@ -254,7 +331,7 @@ check("a retired model is dropped when the served list disagrees", async () => {
   const quotaCall = ctx.calls.find((call) => call.url.endsWith("/v1/models"));
   if (!quotaCall) throw new Error("the served list was never requested");
   if (quotaCall.headers.Authorization !== "Bearer sk-test") throw new Error("served list sent without the key");
-  const titles = [snapshot.primary, ...(snapshot.extraWindows ?? [])].map((window) => window.title);
+  const titles = (snapshot.extraWindows ?? []).map((window) => window.title);
   if (titles.includes("GLM 5.2")) throw new Error(`retired model kept: ${JSON.stringify(titles)}`);
   const rows = (snapshot.details ?? []).find((entry) => entry.title === "Modelos").rows.map((row) => row.label);
   if (rows.includes("GLM 5.2")) throw new Error(`retired model kept in details: ${JSON.stringify(rows)}`);
@@ -279,7 +356,7 @@ check("an unreadable served list fails open instead of hiding everything", async
 check("a naming disagreement fails open rather than blanking the card", async () => {
   const ctx = makeCtx({ key: "sk-test", body: retiredQuota, models: ["something-else-entirely"] });
   const snapshot = await manifest.fetchUsage(ctx);
-  if (!snapshot.primary) throw new Error("every model was dropped");
+  if ((snapshot.extraWindows ?? []).length === 0) throw new Error("every model was dropped");
 });
 
 let failed = 0;
