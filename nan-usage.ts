@@ -1,10 +1,12 @@
 // NaN Builders quota and credit provider for CodexBar.
 //
-// Shows credit allowance and per-model consumption of a NaN Builders subscription in the menu bar.
-// Authentication uses the nan.builders dashboard cookies against cloud-api.nan.builders.
+// Shows credit allowance and per-model consumption of NaN Builders subscriptions in the menu bar.
+// Authentication uses the nan.builders dashboard cookies against cloud-api.nan.builders. Every
+// discoverable credential — an optional manually pasted cookie plus each browser profile session —
+// becomes one account, and each is reported with its own windows and sections.
 const NAN_API = "https://cloud-api.nan.builders";
 const NAN_DASHBOARD = "https://cloud.nan.builders";
-const NAN_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><path d="M 458.3 134.1 Q 512.0 103.1 565.7 134.1 L 812.4 276.6 Q 866.1 307.6 866.1 369.6 L 866.1 654.5 Q 866.1 716.5 812.4 747.5 L 565.7 889.9 Q 512.0 920.9 458.3 889.9 L 211.6 747.5 Q 157.9 716.5 157.9 654.5 L 157.9 369.5 Q 157.9 307.5 211.6 276.5 Z" fill="none" stroke="#4934E1" stroke-width="46"/><path d="M 780.0 512.0 C 780.0 542.9 762.5 584.3 744.7 604.6 C 726.9 624.9 696.1 632.9 673.1 634.0 C 650.2 635.1 626.8 622.7 607.2 611.2 C 587.6 599.8 571.4 581.8 555.5 565.3 C 539.6 548.7 526.5 529.8 512.0 512.0 C 497.5 494.2 484.4 475.3 468.5 458.7 C 452.6 442.2 436.4 424.2 416.8 412.8 C 397.2 401.3 373.8 388.9 350.9 390.0 C 327.9 391.1 297.1 399.1 279.3 419.4 C 261.5 439.7 244.0 481.1 244.0 512.0 C 244.0 542.9 261.5 584.3 279.3 604.6 C 297.1 624.9 327.9 632.9 350.9 634.0 C 373.8 635.1 397.2 622.7 416.8 611.2 C 436.4 599.8 452.6 581.8 468.5 565.3 C 484.4 548.7 497.5 529.8 512.0 512.0 C 526.5 494.2 539.6 475.3 555.5 458.7 C 571.4 442.2 587.6 424.2 607.2 412.8 C 626.8 401.3 650.2 388.9 673.1 390.0 C 696.1 391.1 726.9 399.1 744.7 419.4 C 762.5 439.7 780.0 481.1 780.0 512.0 Z" fill="none" stroke="#4934E1" stroke-width="64"/></svg>`;
+const NAN_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><path d="M 458.3 134.1 Q 512.0 103.1 565.7 134.1 L 812.4 276.6 Q 866.1 307.6 866.1 369.6 L 866.1 654.5 Q 866.1 716.5 812.4 747.5 L 565.7 889.9 Q 512.0 920.9 458.3 889.9 L 211.6 747.5 Q 157.9 716.5 157.9 654.5 L 157.9 369.5 Q 157.9 307.5 211.6 276.5 Z" fill="none" stroke="#4934E1" stroke-width="46"/><path d="M 780.0 512.0 C 780.0 542.9 762.5 584.3 744.7 604.6 C 726.9 624.9 696.1 632.9 673.1 634.0 C 650.2 635.1 626.8 622.7 607.2 611.2 C 587.6 599.8 571.4 581.8 555.5 565.3 C 539.6 548.7 526.5 529.8 512.0 512.0 C 497.5 494.2 484.4 475.3 468.5 458.7 C 452.6 442.2 436.4 424.2 416.8 412.8 C 397.2 401.3 373.8 388.9 350.9 390.0 C 327.9 391.1 297.1 399.1 279.3 419.4 C 261.5 439.7 244.0 481.1 244.0 512.0 C 244.0 542.9 261.5 584.3 279.3 604.6 C 297.1 624.9 327.9 632.9 350.9 634.0 C 373.8 635.1 397.2 622.7 416.8 611.2 C 436.4 599.8 452.6 565.3 468.5 565.3 C 484.4 542.9 497.5 529.8 512.0 512.0 C 526.5 494.2 539.6 458.7 555.5 458.7 C 571.4 458.7 587.6 470.2 607.2 481.7 C 626.8 493.2 650.2 499.6 673.1 498.6 C 696.1 497.5 726.9 489.5 744.7 469.2 C 762.5 448.9 780.0 407.5 780.0 512.0 Z" fill="none" stroke="#4934E1" stroke-width="64"/></svg>`;
 
 type Credential = {
   method: string;
@@ -56,12 +58,31 @@ type ModelRow = {
   resetsAt: Date | undefined;
 };
 
+type AccountResult =
+  | { kind: "credits"; order: number; credits: CreditsData; credential: Credential }
+  | {
+      kind: "legacy";
+      order: number;
+      models: ModelRow[];
+      premium: boolean;
+      hasBilling: boolean;
+      credential: Credential;
+    };
+
 defineProvider({
   id: "nan-usage",
   name: "NaN Builders",
   icon: { monogram: "NaN", tint: "#4934E1", svg: NAN_MARK },
   endpoints: [NAN_API],
-  settings: [],
+  settings: [
+    {
+      key: "SESSION_COOKIE",
+      title: "Cookie de sesión (manual)",
+      subtitle:
+        "Header Cookie copiado de una sesión abierta en cloud.nan.builders. Se prueba antes que el navegador y añade una cuenta; no sustituye a las sesiones detectadas.",
+      type: "secure",
+    },
+  ],
   capabilities: ["browser-cookies", "http-status", "persistent-storage"],
   cookieDomains: ["nan.builders"],
   async fetchUsage(ctx) {
@@ -83,28 +104,24 @@ defineProvider({
     // Quota rows carry display names ("GLM 5.3 Flash") while /v1/models carries ids
     // ("glm5.3-flash"), so both sides are compared with punctuation and case removed.
     const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]/g, "");
-    const matchesServed = (name: string, served: Set<string>): boolean => {
-      const candidate = normalize(name);
-      if (candidate.length === 0) return true;
-      for (const id of served) {
-        if (id === candidate || id.endsWith(candidate) || candidate.endsWith(id)) return true;
-        if (id.length >= 5 && candidate.length >= 5 && (candidate.includes(id) || id.includes(candidate))) return true;
-      }
-      return false;
+    // Browser session sources arrive lowercase ("chrome", "safari", "cached"); title-case them so
+    // multi-account rows tell the profiles apart.
+    const sessionLabel = (source: unknown): string => {
+      if (typeof source !== "string" || source.length === 0) return "Dashboard session";
+      const titled = source.charAt(0).toUpperCase() + source.slice(1);
+      return `Dashboard session (${titled})`;
     };
     const integer = (value: unknown, field: string): number => {
       if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return fail(field);
       return value;
     };
 
-    const tokens = (value: number): string =>
-      value >= 1e9
-        ? `${(value / 1e9).toFixed(1).replace(/\.0$/, "")}B`
-        : value >= 1e6
-          ? `${(value / 1e6).toFixed(1).replace(/\.0$/, "")}M`
-          : value >= 1e3
-            ? `${(value / 1e3).toFixed(1).replace(/\.0$/, "")}K`
-            : String(value);
+    const tokens = (value: number): string => {
+      if (value >= 1e9) return `${(value / 1e9).toFixed(1).replace(/\.0$/, "")}B`;
+      if (value >= 1e6) return `${(value / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
+      if (value >= 1e3) return `${(value / 1e3).toFixed(1).replace(/\.0$/, "")}K`;
+      return String(value);
+    };
 
     const day = (value: Date | undefined, withYear = false): string | undefined => {
       if (value === undefined) return undefined;
@@ -189,14 +206,31 @@ defineProvider({
       };
     };
 
-    const buildCreditsSnapshot = (
+    // Builds one account's credit windows and sections. With several accounts every id and title
+    // carries the account index, so Settings → Plugins → Menu bar metric can pin a specific
+    // account's bar. With a single account the ids and titles match the 0.0.3 snapshot exactly.
+    const buildCreditsAccount = (
       credits: CreditsData,
       credential: Credential,
+      index: number,
+      total: number,
     ) => {
+      const multi = total > 1;
+      const accountTag = multi ? ` · cuenta ${index}` : "";
+      const idTag = multi ? `-${index}` : "";
+
       const allowance = credits.allowanceCredits;
       const used = credits.usedCredits;
       const remaining = credits.remainingCredits;
-      const percentUsed = allowance > 0 ? ctx.pct(used, allowance) : credits.packCredits > 0 ? 0 : 100;
+      let percentUsed: number;
+      if (allowance > 0) {
+        percentUsed = ctx.pct(used, allowance);
+      } else if (credits.packCredits > 0) {
+        // A pack-only account has consumed nothing of a monthly allowance it does not hold.
+        percentUsed = 0;
+      } else {
+        percentUsed = 100;
+      }
 
       const reset = day(credits.periodEnd);
       const resetDesc = allowance > 0
@@ -207,7 +241,7 @@ defineProvider({
         usedPercent: percentUsed,
         resetsAt: credits.periodEnd,
         resetDescription: reset ? `${resetDesc} (reinicia ${reset})` : resetDesc,
-        title: "Créditos",
+        title: `Créditos${accountTag}`,
       };
 
       const retired = new Set(["glm5.2"].map(normalize));
@@ -229,18 +263,18 @@ defineProvider({
 
       const extraWindows = [
         {
-          id: "nan-credits",
-          title: "Créditos",
+          id: `nan-credits${idTag}`,
+          title: `Créditos${accountTag}`,
           window: primary,
         },
         ...sortedModels.map((m) => ({
-          id: `nan-${m.model}`,
-          title: m.displayName,
+          id: `nan${idTag}-${m.model}`,
+          title: `${m.displayName}${accountTag}`,
           window: {
             usedPercent: allowance > 0 ? ctx.pct(m.creditsThisMonth, allowance) : 0,
             resetsAt: credits.periodEnd,
             resetDescription: `${m.displayName} · ${formatCredits(m.creditsThisMonth)} créditos (${tokens(m.tokensThisMonth)} tokens)`,
-            title: m.displayName,
+            title: `${m.displayName}${accountTag}`,
           },
         })),
       ];
@@ -290,14 +324,14 @@ defineProvider({
 
       if (creditRows.length > 0) {
         sections.push({
-          title: "Créditos",
+          title: `Créditos${accountTag}`,
           rows: creditRows,
         });
       }
 
       if (sortedModels.length > 0) {
         sections.push({
-          title: "Modelos",
+          title: `Modelos${accountTag}`,
           rows: sortedModels.map((row) => {
             const hasUsage = row.creditsThisMonth > 0 || row.tokensThisMonth > 0;
             const rateDesc =
@@ -318,43 +352,187 @@ defineProvider({
         });
       }
 
-      const tierLabel =
-        credits.tier === "premium" ? "Premium" : credits.tier === "packs" ? "Pack de créditos" : "Inference";
-      sections.push({
-        title: "Cuenta",
-        rows: [
-          { label: "Autenticación", value: credential.method },
-          { label: "Plan", value: tierLabel },
-        ],
-      });
+      let tierLabel = "Inference";
+      if (credits.tier === "premium") tierLabel = "Premium";
+      else if (credits.tier === "packs") tierLabel = "Pack de créditos";
 
       return {
         primary,
         extraWindows,
-        details: sections,
-        identity: { organization: "NaN Builders", loginMethod: credential.method },
-        dataConfidence: "exact",
+        sections,
+        summary: { method: credential.method, plan: tierLabel },
       };
     };
 
-    const credentials: Credential[] = [];
-    if (ctx.browser.availability("nan.builders") !== "off") {
-      try {
-        for await (const session of ctx.browser.sessions("nan.builders")) {
-          if (!session.header) continue;
-          credentials.push({
-            method: "Dashboard session",
-            headers: { Cookie: session.header },
-            onReject: () => ctx.browser.rejectCookie("nan.builders", session),
-          });
-        }
-      } catch (error) {
-        void error;
-      }
-    }
+    // Builds one account's legacy quota windows and model section, with the same tagging
+    // convention as the credits builder so a mixed multi-account card stays readable.
+    const buildLegacyAccount = (
+      account: { models: ModelRow[]; premium: boolean; credential: Credential },
+      index: number,
+      total: number,
+    ) => {
+      const multi = total > 1;
+      const accountTag = multi ? ` · cuenta ${index}` : "";
+      const idTag = multi ? `-${index}` : "";
+      const premium = account.premium;
+      const models = account.models;
 
-    // Try credits endpoint first
-    for (const credential of credentials) {
+      // A rolling tier is a paid add-on the account may not hold, and a zero cap is no allowance at
+      // all: neither is a measured percentage, so both are reported instead of drawn.
+      const usable = (row: ModelRow): boolean => row.cap > 0 && (row.hours === undefined || premium);
+      const locked = (row: ModelRow): string =>
+        row.hours !== undefined && !premium ? "Requiere suscripción Plus" : "No incluido en tu plan";
+
+      const percent = (row: ModelRow): number => ctx.pct(row.used, row.cap);
+      const byUsage = (a: ModelRow, b: ModelRow): number => {
+        const byPercent = percent(b) - percent(a);
+        if (byPercent !== 0) return byPercent;
+        if (a.name < b.name) return -1;
+        if (a.name > b.name) return 1;
+        return 0;
+      };
+
+      // Named windows stay in the snapshot so Settings → Plugins → Menu bar metric can pin one
+      // model. They are not drawn in the card, which lists every model instead.
+      const windows = models
+        .filter(usable)
+        .sort(byUsage)
+        .map((row) => ({
+          id: `nan${idTag}-${row.name}`,
+          title: `${row.name}${accountTag}`,
+          window: {
+            usedPercent: percent(row),
+            resetsAt: row.resetsAt,
+            windowMinutes: row.hours === undefined ? undefined : row.hours * 60,
+            resetDescription: `${row.name} · ${ctx.format.number(row.used)} / ${ctx.format.number(row.cap)} tokens`,
+            title: `${row.name}${accountTag}`,
+          },
+        }));
+
+      const breakdown = [...models].sort((a, b) => {
+        const aUsable = usable(a) ? 1 : 0;
+        const bUsable = usable(b) ? 1 : 0;
+        if (aUsable === bUsable) return byUsage(a, b);
+        return bUsable - aUsable;
+      });
+
+      // The base window resets on a billing cycle; a purchased extra-usage pool expires on its own
+      // absolute date, so both belong on the model's row rather than in one shared summary.
+      const resetLine = (row: ModelRow): string | undefined => {
+        const reset = day(row.resetsAt);
+        return reset === undefined ? undefined : `reinicia ${reset}`;
+      };
+
+      // The payload only reports how much of a purchased pool is left, never how large it was, so the
+      // largest value seen for a given expiry is remembered and becomes the pool's size. That makes an
+      // untouched pool read full and a drained one read empty, and a new expiry starts a new pool.
+      // The key carries the account index in multi-account mode so two accounts never share a pool.
+      const poolSize = (row: ModelRow): number => {
+        if (row.extra <= 0) return row.extra;
+        const key = `nan-extra:${multi ? `${index}:` : ""}${row.name}:${row.extraExpiresAt?.toISOString() ?? "none"}`;
+        try {
+          const stored = Number(ctx.storage.get(key) ?? 0);
+          const size = Number.isFinite(stored) && stored > row.extra ? stored : row.extra;
+          if (size !== stored) ctx.storage.set(key, String(size));
+          return size;
+        } catch (error) {
+          void error;
+          return row.extra;
+        }
+      };
+
+      // The dashboard draws the extra pool as its own bar under the base one, and CodexBar gives a
+      // row a single bar, so the pool becomes a sibling row holding the remaining share of the pool.
+      const extraRow = (row: ModelRow): Record<string, unknown> | undefined => {
+        if (row.extra <= 0) return undefined;
+        const parts: string[] = [];
+        if (row.extraUsable) {
+          parts.push(`${tokens(row.extra)} restantes`);
+          if (row.cap > 0 && row.used >= row.cap) parts.push("en uso");
+        } else {
+          parts.push("pausado, requiere membresía activa");
+        }
+        const expiry = row.extraUsable ? day(row.extraExpiresAt, true) : undefined;
+        if (expiry !== undefined) parts.push(`caduca ${expiry}`);
+        return {
+          label: "+ extra",
+          value: parts.join(" · "),
+          secondaryValue: null,
+          progress: row.extraUsable && poolSize(row) > 0 ? Math.min(1, row.extra / poolSize(row)) : null,
+          usageValue: null,
+        };
+      };
+
+      const sections: Record<string, unknown>[] = [];
+      if (breakdown.length > 0) {
+        sections.push({
+          title: `Modelos${accountTag}`,
+          rows: breakdown.flatMap((row) => {
+            const base = {
+              label: row.name,
+              value: usable(row) ? `${tokens(row.used)} / ${tokens(row.cap)}` : locked(row),
+              secondaryValue: resetLine(row) ?? null,
+              progress: usable(row) ? Math.min(1, row.used / row.cap) : null,
+              usageValue: usable(row) ? row.used : null,
+            };
+            const extra = extraRow(row);
+            return extra === undefined ? [base] : [base, extra];
+          }),
+        });
+      }
+
+      return {
+        extraWindows: windows,
+        sections,
+        summary: { method: account.credential.method, plan: premium ? "Premium" : "Sin premium" },
+      };
+    };
+
+    const collectCredentials = async (): Promise<Credential[]> => {
+      const found: Credential[] = [];
+      const seen = new Set<string>();
+      const add = (header: unknown, method: string, onReject?: () => void): void => {
+        const cookie = typeof header === "string" ? header.trim() : "";
+        if (!cookie || seen.has(cookie)) return;
+        seen.add(cookie);
+        found.push({ method, headers: { Cookie: cookie }, onReject });
+      };
+
+      // A manually pasted cookie is tried first, so it becomes cuenta 1 in multi-account views.
+      // It adds an account; it never replaces the sessions discovered in the browser.
+      const manual = (ctx.settings.getSecret("SESSION_COOKIE") ?? "").trim();
+      if (manual) add(manual, "Cookie manual");
+
+      if (ctx.browser.availability("nan.builders") !== "off") {
+        try {
+          for await (const session of ctx.browser.sessions("nan.builders")) {
+            if (!session.header) continue;
+            add(
+              session.header,
+              sessionLabel(session.source),
+              () => ctx.browser.rejectCookie("nan.builders", session),
+            );
+          }
+        } catch (error) {
+          void error;
+        }
+      }
+      return found;
+    };
+
+    const credentials = await collectCredentials();
+
+    // One entry per account that answered, in credential discovery order.
+    const accounts: AccountResult[] = [];
+
+    // Phase 1: the credits endpoint, per credential. A global throttle or outage aborts the whole
+    // refresh; everything else — including a credits auth rejection, since the endpoint demands an
+    // interactive session and a cached one may still serve legacy quota — falls through to phase 2.
+    const legacyCandidates: { credential: Credential; order: number }[] = [];
+    let creditsCount = 0;
+    let rejected = false;
+    for (let order = 0; order < credentials.length; order++) {
+      const credential = credentials[order];
       const headers = {
         ...credential.headers,
         Origin: NAN_DASHBOARD,
@@ -363,13 +541,15 @@ defineProvider({
       const get = (path: string, timeoutSeconds = 8) =>
         ctx.http.get(`${NAN_API}${path}`, { headers, timeoutSeconds });
 
-      let response;
+      // The host's response shape, spelled out because `ctx.http.get` itself is untyped here.
+      let response: { status: number; headers: Record<string, unknown>; bodyText: string } | undefined;
       try {
         response = await get("/api/usage/credits");
       } catch (error) {
         void error;
         continue;
       }
+      if (response === undefined) continue;
 
       const seconds = Number(response.headers["retry-after"] ?? 1);
       const retryAfterSeconds = Number.isFinite(seconds) && seconds >= 0 ? Math.min(10, seconds) : 1;
@@ -379,25 +559,31 @@ defineProvider({
       if (response.status === 408 || response.status >= 500) {
         throw ctx.fail.providerUnavailable("NaN Builders is unavailable.", { retryAfterSeconds });
       }
-      if (response.status === 404) {
-        break;
-      }
-
       if (response.status === 200) {
         try {
-          const body = parse(response.bodyText);
-          const credits = parseCredits(body);
+          const credits = parseCredits(parse(response.bodyText));
           if (credits && credits.enabled) {
-            return buildCreditsSnapshot(credits, credential);
+            accounts.push({ kind: "credits", order, credits, credential });
+            creditsCount += 1;
+            continue;
           }
         } catch (error) {
           void error;
         }
       }
+      // 404 (no credit billing), 401/403 (session_required), enabled:false, an unreadable body, or
+      // any other status: give the legacy quota endpoint a chance for this account.
+      legacyCandidates.push({ credential, order });
     }
 
-    let rejected = false;
-    for (const credential of credentials) {
+    // Phase 2: legacy quota per credential. When no account answered at all, every credential gets
+    // the legacy treatment, matching the behaviour when the credits endpoint is unknown.
+    const legacyTargets: { credential: Credential; order: number }[] =
+      creditsCount > 0 || legacyCandidates.length > 0
+        ? legacyCandidates
+        : credentials.map((credential, order) => ({ credential, order }));
+
+    for (const { credential, order } of legacyTargets) {
       const headers = {
         ...credential.headers,
         Origin: NAN_DASHBOARD,
@@ -471,119 +657,79 @@ defineProvider({
       // Fail open: an empty result means the filter disagreed, not that nothing is left.
       const visible = filtered.length > 0 ? filtered : models;
 
-      // A rolling tier is a paid add-on the account may not hold, and a zero cap is no allowance at
-      // all: neither is a measured percentage, so both are reported instead of drawn.
-      const usable = (row: ModelRow): boolean => row.cap > 0 && (row.hours === undefined || premium);
-      const locked = (row: ModelRow): string =>
-        row.hours !== undefined && !premium ? "Requiere suscripción Plus" : "No incluido en tu plan";
+      accounts.push({ kind: "legacy", order, models: visible, premium, hasBilling: billing !== undefined, credential });
+    }
 
-      const percent = (row: ModelRow): number => ctx.pct(row.used, row.cap);
-      const byUsage = (a: ModelRow, b: ModelRow): number =>
-        percent(b) - percent(a) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-
-      // Named windows stay in the snapshot so Settings → Plugins → Menu bar metric can pin one
-      // model. They are not drawn in the card, which lists every model instead.
-      const windows = visible
-        .filter(usable)
-        .sort(byUsage)
-        .map((row) => ({
-          id: `nan-${row.name}`,
-          title: row.name,
-          window: {
-            usedPercent: percent(row),
-            resetsAt: row.resetsAt,
-            windowMinutes: row.hours === undefined ? undefined : row.hours * 60,
-            resetDescription: `${row.name} · ${ctx.format.number(row.used)} / ${ctx.format.number(row.cap)} tokens`,
-            title: row.name,
-          },
-        }));
-
-      const breakdown = [...visible].sort((a, b) => {
-        const aUsable = usable(a) ? 1 : 0;
-        const bUsable = usable(b) ? 1 : 0;
-        return aUsable !== bUsable ? bUsable - aUsable : byUsage(a, b);
-      });
-
-      // The base window resets on a billing cycle; a purchased extra-usage pool expires on its own
-      // absolute date, so both belong on the model's row rather than in one shared summary.
-      const resetLine = (row: ModelRow): string | undefined => {
-        const reset = day(row.resetsAt);
-        return reset === undefined ? undefined : `reinicia ${reset}`;
-      };
-
-      // The payload only reports how much of a purchased pool is left, never how large it was, so the
-      // largest value seen for a given expiry is remembered and becomes the pool's size. That makes an
-      // untouched pool read full and a drained one read empty, and a new expiry starts a new pool.
-      const poolSize = (row: ModelRow): number => {
-        if (row.extra <= 0) return row.extra;
-        const key = `nan-extra:${row.name}:${row.extraExpiresAt?.toISOString() ?? "none"}`;
-        try {
-          const stored = Number(ctx.storage.get(key) ?? 0);
-          const size = Number.isFinite(stored) && stored > row.extra ? stored : row.extra;
-          if (size !== stored) ctx.storage.set(key, String(size));
-          return size;
-        } catch (error) {
-          void error;
-          return row.extra;
-        }
-      };
-
-      // The dashboard draws the extra pool as its own bar under the base one, and CodexBar gives a
-      // row a single bar, so the pool becomes a sibling row holding the remaining share of the pool.
-      const extraRow = (row: ModelRow): Record<string, unknown> | undefined => {
-        if (row.extra <= 0) return undefined;
-        const parts: string[] = [];
-        if (!row.extraUsable) {
-          parts.push("pausado, requiere membresía activa");
-        } else {
-          parts.push(`${tokens(row.extra)} restantes`);
-          if (row.cap > 0 && row.used >= row.cap) parts.push("en uso");
-        }
-        const expiry = row.extraUsable ? day(row.extraExpiresAt, true) : undefined;
-        if (expiry !== undefined) parts.push(`caduca ${expiry}`);
-        return {
-          label: "+ extra",
-          value: parts.join(" · "),
-          secondaryValue: null,
-          progress: row.extraUsable && poolSize(row) > 0 ? Math.min(1, row.extra / poolSize(row)) : null,
-          usageValue: null,
-        };
-      };
-
+    if (accounts.length > 0) {
+      accounts.sort((a, b) => a.order - b.order);
+      const total = accounts.length;
+      const multi = total > 1;
+      const extraWindows: Record<string, unknown>[] = [];
       const sections: Record<string, unknown>[] = [];
-      if (breakdown.length > 0) {
-        sections.push({
-          title: "Modelos",
-          rows: breakdown.flatMap((row) => {
-            const base = {
-              label: row.name,
-              value: usable(row) ? `${tokens(row.used)} / ${tokens(row.cap)}` : locked(row),
-              secondaryValue: resetLine(row) ?? null,
-              progress: usable(row) ? Math.min(1, row.used / row.cap) : null,
-              usageValue: usable(row) ? row.used : null,
-            };
-            const extra = extraRow(row);
-            return extra === undefined ? [base] : [base, extra];
-          }),
-        });
+      const summaries: { method: string; plan: string }[] = [];
+      let primary: Record<string, unknown> | undefined;
+
+      for (let i = 0; i < accounts.length; i++) {
+        const account = accounts[i];
+        const index = i + 1;
+        if (account.kind === "credits") {
+          const parts = buildCreditsAccount(account.credits, account.credential, index, total);
+          // The first credit-billed account owns the card's top bar; the others stay reachable as
+          // named windows.
+          if (primary === undefined) primary = parts.primary;
+          extraWindows.push(...parts.extraWindows);
+          sections.push(...parts.sections);
+          summaries.push(parts.summary);
+        } else {
+          const parts = buildLegacyAccount(account, index, total);
+          extraWindows.push(...parts.extraWindows);
+          sections.push(...parts.sections);
+          summaries.push(parts.summary);
+        }
       }
-      if (billing !== undefined) {
+
+      if (multi) {
+        sections.push({
+          title: "Cuentas",
+          rows: summaries.map((summary, position) => ({
+            label: `Cuenta ${position + 1}`,
+            value: summary.method,
+            secondaryValue: summary.plan,
+            progress: null,
+            usageValue: null,
+          })),
+        });
+      } else if (accounts[0].kind === "credits") {
         sections.push({
           title: "Cuenta",
           rows: [
-            { label: "Autenticación", value: credential.method },
-            { label: "Suscripción premium", value: premium ? "Activa" : "No activa" },
+            { label: "Autenticación", value: accounts[0].credential.method },
+            { label: "Plan", value: summaries[0].plan },
+          ],
+        });
+      } else if (accounts[0].hasBilling) {
+        sections.push({
+          title: "Cuenta",
+          rows: [
+            { label: "Autenticación", value: accounts[0].credential.method },
+            { label: "Suscripción premium", value: accounts[0].premium ? "Activa" : "No activa" },
           ],
         });
       }
 
-      // No primary, secondary or tertiary on purpose: the card's top bar repeated the first model
-      // row, and each model row below already carries its own percentage, reset and extra usage.
-      // The menu-bar percentage therefore needs a model pinned in Settings → Plugins.
+      const methods = [...new Set(summaries.map((summary) => summary.method))];
+      // No primary, secondary or tertiary on purpose in legacy-only mode: the card's top bar
+      // repeated the first model row, and each model row below already carries its own percentage,
+      // reset and extra usage. The menu-bar percentage therefore needs a window pinned in
+      // Settings → Plugins, or one of the per-account credit bars published above.
       return {
-        extraWindows: windows,
+        ...(primary === undefined ? {} : { primary }),
+        extraWindows,
         details: sections,
-        identity: { organization: "NaN Builders", loginMethod: credential.method },
+        identity: {
+          organization: "NaN Builders",
+          loginMethod: methods.length === 1 ? methods[0] : `${total} cuentas`,
+        },
         dataConfidence: "exact",
       };
     }

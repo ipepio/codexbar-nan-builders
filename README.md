@@ -6,12 +6,15 @@ window resets.
 
 [![Built with NaN](https://nan.builders/badge/built-with-nan-compact.svg)](https://nan.builders/?ref=built-with-nan)
 
-Current version: **0.0.3**, the single file `nan-usage.ts`. Changes: [CHANGELOG.md](CHANGELOG.md).
+Current version: **0.0.4**, the single file `nan-usage.ts`. Changes: [CHANGELOG.md](CHANGELOG.md).
 
 <p align="center"><img src="assets/nan-isotipo-color.png" alt="NaN isotipo" width="120"></p>
 
 ## What it shows
 
+- **Multi-account**: every credential CodexBar discovers — browser profiles plus an optional manually pasted cookie —
+  becomes its own account. The card renders per-account sections (`Créditos · cuenta 2`, `Modelos · cuenta 2`) and a
+  `Cuentas` summary, and every account's bar stays pinnable in Settings → Plugins → Menu bar metric.
 - **Dual-mode architecture (Credits & Legacy)**: Supports NaN Builders' modern credit-based billing as well as legacy per-model token quotas.
 - **Credit billing system**:
   - **Aggregate primary bar**: Displays the total monthly credit allowance and consumption percentage directly in your menu bar.
@@ -22,7 +25,7 @@ Current version: **0.0.3**, the single file `nan-usage.ts`. Changes: [CHANGELOG.
   - If credits are not enabled or when querying via API key where credits endpoint is restricted, it seamlessly falls back to per-model token quotas.
   - **A per-model breakdown** in the popover card: tokens used against the cap, the reset date, and explicit labels for models not included.
   - **Extra usage** gets its own line and bar under each model.
-- **The account row** tells you which credential answered (`API key` or `Dashboard session`) and your active plan tier.
+- **The account row** tells you which credential answered (`Cookie manual`, `Dashboard session (Chrome)`, …) and your active plan tier.
 - **Named windows** in the snapshot, so Settings → Plugins → Menu bar metric can pin any single model or the overall credits bar.
 
 A model the cluster no longer serves is dropped instead of lingering: with an API key the plugin cross-checks every
@@ -49,7 +52,7 @@ Or download the released file directly, without cloning:
 
 ```bash
 mkdir -p ~/.config/codexbar/providers
-curl -fsSL https://raw.githubusercontent.com/ipepio/codexbar-nan-builders/v0.0.3/nan-usage.ts \
+curl -fsSL https://raw.githubusercontent.com/ipepio/codexbar-nan-builders/v0.0.4/nan-usage.ts \
   -o ~/.config/codexbar/providers/nan-usage.ts
 ```
 
@@ -58,16 +61,24 @@ CodexBar reads that directory on every start; no build step, no dependencies, no
 
 ## Authentication
 
-The plugin authenticates via **dashboard session cookies** from `nan.builders`.
+The plugin authenticates via **dashboard session cookies** from `nan.builders`, and reports one account per credential:
 
-- **Chromium-based browsers (Chrome, Brave, Arc, Edge)**: CodexBar reads session cookies directly once you are logged in to `cloud.nan.builders`.
+- **Chromium-based browsers (Chrome, Brave, Arc, Edge)**: CodexBar reads session cookies directly once you are logged in to `cloud.nan.builders`. Log in with a different account in another browser profile and both show up as separate accounts.
 - **Safari**: In macOS, Safari stores cookies in a protected container. For CodexBar to read Safari session cookies, grant **Full Disk Access** to CodexBar in **System Settings → Privacy & Security → Full Disk Access**.
+- **Manual cookie**: paste the `Cookie` header of a session opened on `cloud.nan.builders` into the plugin's
+  `SESSION_COOKIE` setting (Settings → Plugins → NaN Builders). DevTools → Network → any request to
+  `cloud.nan.builders` → copy the whole `Cookie` request header. The manual cookie is tried first, so it lands as
+  cuenta 1; it adds an account and never replaces browser discovery. A cookie identical to an already-detected
+  browser session collapses into one account.
 
 ## Settings
 
-No settings required (`settings: []`). The plugin automatically detects your active session.
+One optional setting:
 
-The plugin declares the `persistent-storage` capability to remember each extra-usage pool's size, keyed by model and expiry date.
+- `SESSION_COOKIE` (secure): manually pasted `Cookie` header, for accounts CodexBar cannot read from any browser.
+
+The plugin declares the `persistent-storage` capability to remember each extra-usage pool's size, keyed by account (in
+multi-account mode), model, and expiry date.
 
 ## API contract
 
@@ -97,9 +108,11 @@ Quota has an 8 s deadline and a `Retry-After` honoured up to 10 s.
 node --experimental-strip-types tests/snapshot.test.mjs
 ```
 
-Twenty-one checks run against a fake `ctx`: manifest shape, the icon's self-contained SVG, cookie session authentication,
+Twenty-six checks run against a fake `ctx`: manifest shape, the manual-cookie setting, the icon's self-contained SVG, cookie session authentication,
 missing-credential guidance, credit primary bar, pack credits, credit model consumption, pack-only accounts, frozen account
-status, credits-to-legacy fallback, legacy quota ordering and extra-usage pools, premium labelling, and rejection handling.
+status, credits-to-legacy fallback, legacy quota ordering and extra-usage pools, premium labelling, rejection handling, and
+multi-account rendering (two browser sessions, manual-cookie priority, dedupe, eviction with a surviving account, mixed
+credits + legacy).
 No network and no CodexBar needed.
 
 ## Versioning

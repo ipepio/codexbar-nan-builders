@@ -3,6 +3,35 @@
 All notable changes to this plugin are recorded here. The version applies to `nan-usage.ts`: replace the file, then
 re-approve the plugin in CodexBar whenever the manifest changes.
 
+## 0.0.4 — 2026-11-11
+
+**Multi-account support**
+
+- Every credential the host can discover now becomes its own account — each browser profile session, plus an optional
+  manually pasted cookie — and the card renders per-account sections and windows instead of stopping at the first
+  session that answered.
+- New secure setting `SESSION_COOKIE` ("Cookie de sesión (manual)"): paste the `Cookie` header of a session opened on
+  `cloud.nan.builders` to add an account CodexBar cannot see in any browser. It is tried first, so it lands as
+  cuenta 1; it adds an account and never replaces browser discovery.
+- Identical cookie headers collapse into one account, so pasting the cookie of an already-detected browser session
+  does not duplicate it.
+- With more than one account, ids and titles carry the account tag: sections `Créditos · cuenta 2`, `Modelos · cuenta 2`,
+  windows `nan-credits-2`, `nan-2-<model>`, and a final `Cuentas` summary listing each account's method and plan. The
+  card's top bar belongs to cuenta 1; every account's credit bar stays pinnable in Settings → Plugins → Menu bar metric.
+- With a single account the snapshot is unchanged from 0.0.3 (ids `nan-credits`, `nan-<model>`, sections `Créditos`,
+  `Modelos`, `Cuenta`), so pinned menu-bar metrics keep working.
+- Mixed billing renders together: a credits account plus a legacy quota account (or the reverse) share one card, each
+  with its own model breakdown. An expired session is evicted without taking the other accounts down.
+- Per-account extra-usage pools in legacy mode: pool-size keys carry the account index in multi-account mode, so two
+  accounts never share a pool.
+
+**Housekeeping**
+
+- Removed the unused `matchesServed` helper left over from the API-key era.
+- Manifest change: `settings` gains `SESSION_COOKIE` — re-approve the plugin in CodexBar after updating the file.
+- Verification: 26 tests (21 existing + 5 new) covering two browser sessions, manual-cookie priority, dedupe,
+  eviction with a surviving account, and mixed credits + legacy rendering.
+
 ## 0.0.3 — 2026-11-11
 
 **Credit billing system**

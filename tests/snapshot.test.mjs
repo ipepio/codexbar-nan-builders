@@ -39,8 +39,6 @@ const premiumQuota = {
   ],
 };
 
-const servedIDs = ["oven-3.8-flash", "deepseek-v4-flash", "xiaomi-mimo-v2.6-flash", "glm5.3", "glm5.3-flash"];
-
 const retiredQuota = {
   periodStart: "2026-10-01",
   models: [
@@ -53,13 +51,19 @@ function makeCtx({
   store = new Map(),
   storageThrows = false,
   cookieHeader = "session=abc",
+  manualCookie = null,
+  sessions = null,
   billing = freeBilling,
   quotaStatus = 200,
   body = quota,
   credits = null,
   creditsStatus = credits ? 200 : 404,
   onCreditsGet = null,
+  onQuotaGet = null,
 } = {}) {
+  const resolvedSessions = sessions ?? (cookieHeader
+    ? [{ id: "s1", header: cookieHeader, source: "chrome", origin: "nan.builders" }]
+    : []);
   const calls = [];
   return {
     calls,
@@ -77,17 +81,16 @@ function makeCtx({
     store,
     settings: {
       get: () => null,
-      getSecret: () => null,
+      getSecret: (key) => (key === "SESSION_COOKIE" && manualCookie ? manualCookie : null),
     },
     browser: {
       supportedBrowsers: "Chrome, Safari",
-      availability: () => (cookieHeader ? "available" : "off"),
+      availability: () => (resolvedSessions.length > 0 ? "available" : "off"),
       rejectCookie: () => {
         calls.push({ reject: true });
       },
       async *sessions() {
-        if (!cookieHeader) return;
-        yield { id: "s1", header: cookieHeader, source: "chrome", origin: "nan.builders" };
+        for (const session of resolvedSessions) yield session;
       },
     },
     http: {
@@ -98,6 +101,7 @@ function makeCtx({
           return { status: creditsStatus, headers: {}, bodyText: credits ? JSON.stringify(credits) : "" };
         }
         if (url.endsWith("/api/usage/quota")) {
+          if (onQuotaGet) return onQuotaGet(options);
           return { status: quotaStatus, headers: {}, bodyText: JSON.stringify(body) };
         }
         if (url.endsWith("/api/billing")) {
@@ -152,13 +156,16 @@ function check(name, run) {
 
 const manifest = await loadPlugin();
 
-check("manifest declares one HTTPS origin and empty settings", () => {
+check("manifest declares one HTTPS origin, a secure manual-cookie setting and plugin capabilities", () => {
   const origins = JSON.stringify(manifest.endpoints);
   if (!origins.includes("https://cloud-api.nan.builders")) throw new Error(`origins: ${origins}`);
   const capabilities = JSON.stringify(manifest.capabilities ?? []);
   if (!capabilities.includes("persistent-storage")) throw new Error(`capabilities: ${capabilities}`);
   if (!capabilities.includes("browser-cookies")) throw new Error(`capabilities: ${capabilities}`);
-  if (!Array.isArray(manifest.settings) || manifest.settings.length !== 0) throw new Error("settings should be empty array");
+  const settings = manifest.settings ?? [];
+  if (!Array.isArray(settings) || settings.length !== 1) throw new Error(`settings: ${JSON.stringify(settings)}`);
+  if (settings[0].key !== "SESSION_COOKIE") throw new Error(`setting key: ${settings[0].key}`);
+  if (settings[0].type !== "secure") throw new Error(`setting type: ${settings[0].type}`);
 });
 
 check("manifest icon is an inline SVG within the host limits", () => {
@@ -173,12 +180,12 @@ check("manifest icon is an inline SVG within the host limits", () => {
   if (/url\(|style=|image|DOCTYPE/i.test(svg)) throw new Error("icon.svg contains a forbidden token");
 });
 
-check("dashboard session authentication sends a cookie and declares identity", async () => {
+check("dashboard session authentication sends a cookie and declares the browser source", async () => {
   const ctx = makeCtx({ cookieHeader: "session=abc" });
   const snapshot = await manifest.fetchUsage(ctx);
   const quotaCall = ctx.calls.find((call) => call.url.endsWith("/api/usage/quota"));
   if (quotaCall.headers.Cookie !== "session=abc") throw new Error("cookie not sent");
-  if (snapshot.identity.loginMethod !== "Dashboard session") throw new Error(snapshot.identity.loginMethod);
+  if (snapshot.identity.loginMethod !== "Dashboard session (Chrome)") throw new Error(snapshot.identity.loginMethod);
 });
 
 check("without credentials the error guides the user to sign in", async () => {
@@ -438,6 +445,26 @@ const sampleCredits = {
   ],
 };
 
+const manualCredits = { ...sampleCredits, usedCredits: 900, remainingCredits: 6100 };
+
+const secondCredits = {
+  ...sampleCredits,
+  usedCredits: 3200,
+  remainingCredits: 3800,
+  packCredits: 0,
+  packExpiresAt: undefined,
+  models: [
+    {
+      model: "glm5.3-flash",
+      displayName: "GLM 5.3 Flash",
+      approxCreditsPerMTokens: 1.0,
+      creditsThisMonth: 3200,
+      tokensThisMonth: 3200000000,
+      rates: { inputPerM: 0.3, cachedInputPerM: 0.05, outputPerM: 1.2 },
+    },
+  ],
+};
+
 check("credits response publishes primary bar with used credits percentage", async () => {
   const ctx = makeCtx({ credits: sampleCredits, cookieHeader: "session=abc" });
   const snapshot = await manifest.fetchUsage(ctx);
@@ -511,6 +538,120 @@ check("when credits returns enabled: false the plugin falls back to legacy quota
   if (snapshot.primary !== undefined) throw new Error("primary window published for legacy quota");
   const extras = (snapshot.extraWindows ?? []).map((w) => w.title);
   if (!extras.includes("DeepSeek V4-Flash")) throw new Error(`extras: ${JSON.stringify(extras)}`);
+});
+
+check("two browser sessions render as two tagged accounts", async () => {
+  const ctx = makeCtx({
+    sessions: [
+      { id: "s1", header: "session=a", source: "chrome" },
+      { id: "s2", header: "session=b", source: "safari" },
+    ],
+    onCreditsGet: (options) => ({
+      status: 200,
+      headers: {},
+      bodyText: JSON.stringify(options.headers.Cookie === "session=a" ? sampleCredits : secondCredits),
+    }),
+  });
+  const snapshot = await manifest.fetchUsage(ctx);
+  const titles = (snapshot.details ?? []).map((section) => section.title);
+  if (!titles.includes("Créditos · cuenta 1") || !titles.includes("Créditos · cuenta 2")) {
+    throw new Error(`sections: ${JSON.stringify(titles)}`);
+  }
+  if (!titles.includes("Cuentas")) throw new Error(`no summary section: ${JSON.stringify(titles)}`);
+  const ids = (snapshot.extraWindows ?? []).map((window) => window.id);
+  if (!ids.includes("nan-credits-1") || !ids.includes("nan-credits-2")) throw new Error(`ids: ${JSON.stringify(ids)}`);
+  if (!ids.includes("nan-1-deepseek-v4-flash") || !ids.includes("nan-2-glm5.3-flash")) {
+    throw new Error(`ids: ${JSON.stringify(ids)}`);
+  }
+  const summary = (snapshot.details ?? []).find((section) => section.title === "Cuentas");
+  if (summary.rows[0].value !== "Dashboard session (Chrome)") throw new Error(summary.rows[0].value);
+  if (summary.rows[1].value !== "Dashboard session (Safari)") throw new Error(summary.rows[1].value);
+  if (snapshot.identity.loginMethod !== "2 cuentas") throw new Error(snapshot.identity.loginMethod);
+  if (snapshot.primary.title !== "Créditos · cuenta 1") throw new Error(snapshot.primary.title);
+});
+
+check("a manually pasted cookie is tried first and becomes cuenta 1", async () => {
+  const ctx = makeCtx({
+    manualCookie: "session=manual",
+    onCreditsGet: (options) => ({
+      status: 200,
+      headers: {},
+      bodyText: JSON.stringify(options.headers.Cookie === "session=manual" ? manualCredits : sampleCredits),
+    }),
+  });
+  const snapshot = await manifest.fetchUsage(ctx);
+  const firstCreditsCall = ctx.calls.find((call) => call.url.endsWith("/api/usage/credits"));
+  if (firstCreditsCall.headers.Cookie !== "session=manual") throw new Error("manual cookie not tried first");
+  if (snapshot.identity.loginMethod !== "2 cuentas") throw new Error(snapshot.identity.loginMethod);
+  const summary = (snapshot.details ?? []).find((section) => section.title === "Cuentas");
+  if (summary.rows[0].label !== "Cuenta 1") throw new Error(summary.rows[0].label);
+  if (summary.rows[0].value !== "Cookie manual") throw new Error(summary.rows[0].value);
+  if (snapshot.primary.title !== "Créditos · cuenta 1") throw new Error(snapshot.primary.title);
+  const expected = (900 / 7000) * 100;
+  if (Math.abs(snapshot.primary.usedPercent - expected) > 0.01) {
+    throw new Error(`usedPercent: ${snapshot.primary.usedPercent} !== ${expected}`);
+  }
+});
+
+check("an identical manual and browser cookie collapses into one account", async () => {
+  const ctx = makeCtx({ manualCookie: "session=abc", credits: sampleCredits });
+  const snapshot = await manifest.fetchUsage(ctx);
+  const creditCalls = ctx.calls.filter((call) => call.url.endsWith("/api/usage/credits")).length;
+  if (creditCalls !== 1) throw new Error(`credits calls: ${creditCalls}`);
+  if (snapshot.identity.loginMethod !== "Cookie manual") throw new Error(snapshot.identity.loginMethod);
+  if (snapshot.primary.title !== "Créditos") throw new Error(snapshot.primary.title);
+  const titles = (snapshot.details ?? []).map((section) => section.title);
+  if (titles.includes("Cuentas")) throw new Error(`single account got a summary section: ${JSON.stringify(titles)}`);
+});
+
+check("an expired first session is evicted while the second account still renders", async () => {
+  const ctx = makeCtx({
+    sessions: [
+      { id: "s1", header: "session=dead", source: "chrome" },
+      { id: "s2", header: "session=live", source: "safari" },
+    ],
+    onCreditsGet: (options) => ({
+      status: options.headers.Cookie === "session=dead" ? 401 : 200,
+      headers: {},
+      bodyText: options.headers.Cookie === "session=dead" ? "" : JSON.stringify(sampleCredits),
+    }),
+    onQuotaGet: (options) => ({
+      status: options.headers.Cookie === "session=dead" ? 401 : 200,
+      headers: {},
+      bodyText: JSON.stringify(quota),
+    }),
+  });
+  const snapshot = await manifest.fetchUsage(ctx);
+  if (!ctx.calls.some((call) => call.reject)) throw new Error("expired session was not evicted");
+  if (!ctx.calls.some((call) => call.url.endsWith("/api/usage/credits") && call.headers.Cookie === "session=live")) {
+    throw new Error("the second session was never tried");
+  }
+  if (snapshot.identity.loginMethod !== "Dashboard session (Safari)") throw new Error(snapshot.identity.loginMethod);
+  if (snapshot.primary.title !== "Créditos") throw new Error(snapshot.primary.title);
+});
+
+check("a credits account and a legacy account render together", async () => {
+  const ctx = makeCtx({
+    sessions: [
+      { id: "s1", header: "session=a", source: "chrome" },
+      { id: "s2", header: "session=b", source: "safari" },
+    ],
+    onCreditsGet: (options) => ({
+      status: options.headers.Cookie === "session=a" ? 200 : 404,
+      headers: {},
+      bodyText: options.headers.Cookie === "session=a" ? JSON.stringify(sampleCredits) : "",
+    }),
+  });
+  const snapshot = await manifest.fetchUsage(ctx);
+  if (!snapshot.primary) throw new Error("credits account lost its primary bar");
+  const titles = (snapshot.details ?? []).map((section) => section.title);
+  if (!titles.includes("Modelos · cuenta 2")) throw new Error(`sections: ${JSON.stringify(titles)}`);
+  const summary = (snapshot.details ?? []).find((section) => section.title === "Cuentas");
+  if (summary.rows[1].secondaryValue !== "Sin premium") throw new Error(summary.rows[1].secondaryValue);
+  const ids = (snapshot.extraWindows ?? []).map((window) => window.id);
+  if (!ids.includes("nan-credits-1") || !ids.includes("nan-2-Oven 3.8 Flash")) {
+    throw new Error(`ids: ${JSON.stringify(ids)}`);
+  }
 });
 
 let failed = 0;
