@@ -52,13 +52,13 @@ const retiredQuota = {
 function makeCtx({
   store = new Map(),
   storageThrows = false,
-  key = null,
-  cookieHeader = null,
+  cookieHeader = "session=abc",
   billing = freeBilling,
   quotaStatus = 200,
   body = quota,
-  models = servedIDs,
-  modelsStatus = 200,
+  credits = null,
+  creditsStatus = credits ? 200 : 404,
+  onCreditsGet = null,
 } = {}) {
   const calls = [];
   return {
@@ -77,7 +77,7 @@ function makeCtx({
     store,
     settings: {
       get: () => null,
-      getSecret: (name) => (name === "API_KEY" ? key : null),
+      getSecret: () => null,
     },
     browser: {
       supportedBrowsers: "Chrome, Safari",
@@ -93,13 +93,12 @@ function makeCtx({
     http: {
       async get(url, options = {}) {
         calls.push({ url, headers: options.headers ?? {} });
+        if (url.endsWith("/api/usage/credits")) {
+          if (onCreditsGet) return onCreditsGet(options);
+          return { status: creditsStatus, headers: {}, bodyText: credits ? JSON.stringify(credits) : "" };
+        }
         if (url.endsWith("/api/usage/quota")) {
           return { status: quotaStatus, headers: {}, bodyText: JSON.stringify(body) };
-        }
-        if (url.endsWith("/v1/models")) {
-          if (modelsStatus !== 200) return { status: modelsStatus, headers: {}, bodyText: "" };
-          const data = models.map((id) => ({ id }));
-          return { status: 200, headers: {}, bodyText: JSON.stringify({ data }) };
         }
         if (url.endsWith("/api/billing")) {
           return billing
@@ -153,14 +152,13 @@ function check(name, run) {
 
 const manifest = await loadPlugin();
 
-check("manifest declares one HTTPS origin and a secure API key setting", () => {
+check("manifest declares one HTTPS origin and empty settings", () => {
   const origins = JSON.stringify(manifest.endpoints);
   if (!origins.includes("https://cloud-api.nan.builders")) throw new Error(`origins: ${origins}`);
   const capabilities = JSON.stringify(manifest.capabilities ?? []);
   if (!capabilities.includes("persistent-storage")) throw new Error(`capabilities: ${capabilities}`);
-  const setting = (manifest.settings ?? []).find((entry) => entry.key === "API_KEY");
-  if (!setting) throw new Error("missing API_KEY setting");
-  if (setting.type !== "secure") throw new Error(`API_KEY type ${setting.type}`);
+  if (!capabilities.includes("browser-cookies")) throw new Error(`capabilities: ${capabilities}`);
+  if (!Array.isArray(manifest.settings) || manifest.settings.length !== 0) throw new Error("settings should be empty array");
 });
 
 check("manifest icon is an inline SVG within the host limits", () => {
@@ -175,27 +173,16 @@ check("manifest icon is an inline SVG within the host limits", () => {
   if (/url\(|style=|image|DOCTYPE/i.test(svg)) throw new Error("icon.svg contains a forbidden token");
 });
 
-check("API key authentication sends a bearer token and reads no cookie", async () => {
-  const ctx = makeCtx({ key: "sk-test", cookieHeader: "session=abc" });
-  const snapshot = await manifest.fetchUsage(ctx);
-  const quotaCall = ctx.calls.find((call) => call.url.endsWith("/api/usage/quota"));
-  if (quotaCall.headers.Authorization !== "Bearer sk-test") throw new Error("no bearer header");
-  if (quotaCall.headers.Cookie !== undefined) throw new Error("cookie sent beside the key");
-  if (ctx.calls.some((call) => call.reject)) throw new Error("cookie rejected while the key worked");
-  if (snapshot.identity.loginMethod !== "API key") throw new Error(`loginMethod ${snapshot.identity.loginMethod}`);
-});
-
-check("without a key the plugin falls back to dashboard cookies", async () => {
+check("dashboard session authentication sends a cookie and declares identity", async () => {
   const ctx = makeCtx({ cookieHeader: "session=abc" });
   const snapshot = await manifest.fetchUsage(ctx);
   const quotaCall = ctx.calls.find((call) => call.url.endsWith("/api/usage/quota"));
   if (quotaCall.headers.Cookie !== "session=abc") throw new Error("cookie not sent");
-  if (quotaCall.headers.Authorization !== undefined) throw new Error("authorization header without a key");
   if (snapshot.identity.loginMethod !== "Dashboard session") throw new Error(snapshot.identity.loginMethod);
 });
 
-check("with neither credential the error names both options", async () => {
-  const ctx = makeCtx();
+check("without credentials the error guides the user to sign in", async () => {
+  const ctx = makeCtx({ cookieHeader: null });
   let error;
   try {
     await manifest.fetchUsage(ctx);
@@ -204,7 +191,7 @@ check("with neither credential the error names both options", async () => {
   }
   if (!error) throw new Error("fetch succeeded without credentials");
   if (error.kind !== "missingCredential") throw new Error(`kind ${error.kind}`);
-  if (!/API key/.test(error.message) || !/cloud\.nan\.builders/.test(error.message)) {
+  if (!/cloud\.nan\.builders/.test(error.message)) {
     throw new Error(`message: ${error.message}`);
   }
 });
@@ -390,17 +377,7 @@ check("a paid account gets the rolling premium window as a real bar", async () =
   if (glm.window.windowMinutes !== 240) throw new Error(`windowMinutes ${glm.window.windowMinutes}`);
 });
 
-check("a rejected key names the key, a rejected cookie names the session", async () => {
-  const keyCtx = makeCtx({ key: "sk-test", quotaStatus: 401 });
-  let keyError;
-  try {
-    await manifest.fetchUsage(keyCtx);
-  } catch (caught) {
-    keyError = caught;
-  }
-  if (keyError?.kind !== "authenticationExpired") throw new Error(`key kind ${keyError?.kind}`);
-  if (!/API key/.test(keyError.message)) throw new Error(keyError.message);
-
+check("a rejected cookie evicts the session", async () => {
   const cookieCtx = makeCtx({ cookieHeader: "session=abc", quotaStatus: 401 });
   let cookieError;
   try {
@@ -412,12 +389,9 @@ check("a rejected key names the key, a rejected cookie names the session", async
   if (!cookieCtx.calls.some((call) => call.reject)) throw new Error("rejected cookie was not evicted");
 });
 
-check("a retired model is dropped when the served list disagrees", async () => {
-  const ctx = makeCtx({ key: "sk-test", body: retiredQuota });
+check("a retired model is filtered out", async () => {
+  const ctx = makeCtx({ body: retiredQuota });
   const snapshot = await manifest.fetchUsage(ctx);
-  const quotaCall = ctx.calls.find((call) => call.url.endsWith("/v1/models"));
-  if (!quotaCall) throw new Error("the served list was never requested");
-  if (quotaCall.headers.Authorization !== "Bearer sk-test") throw new Error("served list sent without the key");
   const titles = (snapshot.extraWindows ?? []).map((window) => window.title);
   if (titles.includes("GLM 5.2")) throw new Error(`retired model kept: ${JSON.stringify(titles)}`);
   const rows = (snapshot.details ?? []).find((entry) => entry.title === "Modelos").rows.map((row) => row.label);
@@ -425,25 +399,118 @@ check("a retired model is dropped when the served list disagrees", async () => {
   if (!rows.includes("Oven 3.8 Flash")) throw new Error(`served model dropped: ${JSON.stringify(rows)}`);
 });
 
-check("a cookie session keeps the payload as reported, since it cannot ask", async () => {
-  const ctx = makeCtx({ cookieHeader: "session=abc", body: retiredQuota });
+const sampleCredits = {
+  enabled: true,
+  tier: "inference",
+  periodStart: "2026-11-01T00:00:00.000Z",
+  periodEnd: "2026-12-01T00:00:00.000Z",
+  allowanceCredits: 7000,
+  usedCredits: 1420.5,
+  remainingCredits: 5579.5,
+  packCredits: 1000,
+  packExpiresAt: "2027-05-01T00:00:00.000Z",
+  frontierPaused: false,
+  frozen: false,
+  models: [
+    {
+      model: "deepseek-v4-flash",
+      displayName: "DeepSeek V4-Flash",
+      approxCreditsPerMTokens: 1.5,
+      creditsThisMonth: 820.3,
+      tokensThisMonth: 550000000,
+      rates: { inputPerM: 0.5, cachedInputPerM: 0.1, outputPerM: 2.0 },
+    },
+    {
+      model: "glm5.3-flash",
+      displayName: "GLM 5.3 Flash",
+      approxCreditsPerMTokens: 1.0,
+      creditsThisMonth: 600.2,
+      tokensThisMonth: 600000000,
+      rates: { inputPerM: 0.3, cachedInputPerM: 0.05, outputPerM: 1.2 },
+    },
+    {
+      model: "glm5.2",
+      displayName: "GLM 5.2",
+      approxCreditsPerMTokens: 0.8,
+      creditsThisMonth: 0,
+      tokensThisMonth: 0,
+    },
+  ],
+};
+
+check("credits response publishes primary bar with used credits percentage", async () => {
+  const ctx = makeCtx({ credits: sampleCredits, cookieHeader: "session=abc" });
   const snapshot = await manifest.fetchUsage(ctx);
-  if (ctx.calls.some((call) => call.url.endsWith("/v1/models"))) throw new Error("cookie session queried /v1/models");
-  const rows = (snapshot.details ?? []).find((entry) => entry.title === "Modelos").rows.map((row) => row.label);
-  if (!rows.includes("GLM 5.2")) throw new Error(`payload was filtered: ${JSON.stringify(rows)}`);
+  if (!snapshot.primary) throw new Error("primary window is missing in credits mode");
+  if (snapshot.primary.title !== "Créditos") throw new Error(`title: ${snapshot.primary.title}`);
+  const expectedPct = (1420.5 / 7000) * 100;
+  if (Math.abs(snapshot.primary.usedPercent - expectedPct) > 0.01) {
+    throw new Error(`usedPercent: ${snapshot.primary.usedPercent} !== ${expectedPct}`);
+  }
+  if (!snapshot.primary.resetDescription.includes("1,420.5 / 7,000")) {
+    throw new Error(`resetDescription: ${snapshot.primary.resetDescription}`);
+  }
+  if (!snapshot.primary.resetsAt) throw new Error("resetsAt is missing");
 });
 
-check("an unreadable served list fails open instead of hiding everything", async () => {
-  const ctx = makeCtx({ key: "sk-test", body: retiredQuota, modelsStatus: 500 });
+check("credits detail rows carry allowance, pack credits and per-model consumption", async () => {
+  const ctx = makeCtx({ credits: sampleCredits, cookieHeader: "session=abc" });
   const snapshot = await manifest.fetchUsage(ctx);
-  const rows = (snapshot.details ?? []).find((entry) => entry.title === "Modelos").rows.map((row) => row.label);
-  if (!rows.includes("GLM 5.2")) throw new Error(`rows: ${JSON.stringify(rows)}`);
+  const creditSection = (snapshot.details ?? []).find((entry) => entry.title === "Créditos");
+  if (!creditSection) throw new Error("missing Créditos section");
+  const planRow = creditSection.rows.find((r) => r.label === "Plan mensual");
+  if (!planRow || !planRow.value.includes("1,420.5 / 7,000")) throw new Error(`planRow: ${planRow?.value}`);
+  const packRow = creditSection.rows.find((r) => r.label === "+ Pack créditos");
+  if (!packRow || !packRow.value.includes("1,000 restantes") || !packRow.value.includes("caduca May 1 2027")) {
+    throw new Error(`packRow: ${packRow?.value}`);
+  }
+
+  const modelSection = (snapshot.details ?? []).find((entry) => entry.title === "Modelos");
+  if (!modelSection) throw new Error("missing Modelos section");
+  const deepseek = modelSection.rows.find((r) => r.label === "DeepSeek V4-Flash");
+  if (!deepseek || !deepseek.value.includes("820.3 cr") || !deepseek.value.includes("550M tokens")) {
+    throw new Error(`deepseek row: ${deepseek?.value}`);
+  }
+  if (!deepseek.secondaryValue.includes("1.5 cr / 1M")) {
+    throw new Error(`deepseek secondary: ${deepseek?.secondaryValue}`);
+  }
 });
 
-check("a naming disagreement fails open rather than blanking the card", async () => {
-  const ctx = makeCtx({ key: "sk-test", body: retiredQuota, models: ["something-else-entirely"] });
+check("credits endpoint gracefully handles pack-only accounts with no monthly allowance", async () => {
+  const packOnlyCredits = {
+    ...sampleCredits,
+    tier: "packs",
+    allowanceCredits: 0,
+    usedCredits: 0,
+    remainingCredits: 0,
+    packCredits: 2500,
+  };
+  const ctx = makeCtx({ credits: packOnlyCredits, cookieHeader: "session=abc" });
   const snapshot = await manifest.fetchUsage(ctx);
-  if ((snapshot.extraWindows ?? []).length === 0) throw new Error("every model was dropped");
+  if (!snapshot.primary) throw new Error("primary window missing");
+  if (snapshot.primary.usedPercent !== 0) throw new Error(`usedPercent: ${snapshot.primary.usedPercent}`);
+  if (!snapshot.primary.resetDescription.includes("2,500")) {
+    throw new Error(`resetDesc: ${snapshot.primary.resetDescription}`);
+  }
+});
+
+check("frozen credits account reflects paused status in details", async () => {
+  const frozenCredits = { ...sampleCredits, frozen: true };
+  const ctx = makeCtx({ credits: frozenCredits, cookieHeader: "session=abc" });
+  const snapshot = await manifest.fetchUsage(ctx);
+  const statusRow = (snapshot.details ?? []).find((entry) => entry.title === "Créditos")?.rows.find((r) => r.label === "Estado");
+  if (!statusRow || !statusRow.value.includes("Pausado")) {
+    throw new Error(`statusRow: ${statusRow?.value}`);
+  }
+});
+
+check("when credits returns enabled: false the plugin falls back to legacy quota", async () => {
+  const disabledCredits = { enabled: false };
+  const ctx = makeCtx({ credits: disabledCredits, cookieHeader: "session=abc" });
+  const snapshot = await manifest.fetchUsage(ctx);
+  if (snapshot.primary !== undefined) throw new Error("primary window published for legacy quota");
+  const extras = (snapshot.extraWindows ?? []).map((w) => w.title);
+  if (!extras.includes("DeepSeek V4-Flash")) throw new Error(`extras: ${JSON.stringify(extras)}`);
 });
 
 let failed = 0;

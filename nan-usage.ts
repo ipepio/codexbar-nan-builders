@@ -1,13 +1,8 @@
-// NaN Builders quota provider for CodexBar.
+// NaN Builders quota and credit provider for CodexBar.
 //
-// Shows the per-model token quota of a NaN Builders subscription in the menu bar. Derived from
-// CodexBar's bundled Helmcode plugin, pinned to the NaN tenant so it can run beside the built-in
-// Helmcode provider (which shows Helmcode Cloud).
-//
-// Authentication is the NaN API key when one is configured, and the nan.builders dashboard cookies
-// otherwise. Both hit the same origin: cloud-api.nan.builders.
+// Shows credit allowance and per-model consumption of a NaN Builders subscription in the menu bar.
+// Authentication uses the nan.builders dashboard cookies against cloud-api.nan.builders.
 const NAN_API = "https://cloud-api.nan.builders";
-const NAN_INFERENCE_API = "https://api.nan.builders";
 const NAN_DASHBOARD = "https://cloud.nan.builders";
 const NAN_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><path d="M 458.3 134.1 Q 512.0 103.1 565.7 134.1 L 812.4 276.6 Q 866.1 307.6 866.1 369.6 L 866.1 654.5 Q 866.1 716.5 812.4 747.5 L 565.7 889.9 Q 512.0 920.9 458.3 889.9 L 211.6 747.5 Q 157.9 716.5 157.9 654.5 L 157.9 369.5 Q 157.9 307.5 211.6 276.5 Z" fill="none" stroke="#4934E1" stroke-width="46"/><path d="M 780.0 512.0 C 780.0 542.9 762.5 584.3 744.7 604.6 C 726.9 624.9 696.1 632.9 673.1 634.0 C 650.2 635.1 626.8 622.7 607.2 611.2 C 587.6 599.8 571.4 581.8 555.5 565.3 C 539.6 548.7 526.5 529.8 512.0 512.0 C 497.5 494.2 484.4 475.3 468.5 458.7 C 452.6 442.2 436.4 424.2 416.8 412.8 C 397.2 401.3 373.8 388.9 350.9 390.0 C 327.9 391.1 297.1 399.1 279.3 419.4 C 261.5 439.7 244.0 481.1 244.0 512.0 C 244.0 542.9 261.5 584.3 279.3 604.6 C 297.1 624.9 327.9 632.9 350.9 634.0 C 373.8 635.1 397.2 622.7 416.8 611.2 C 436.4 599.8 452.6 581.8 468.5 565.3 C 484.4 548.7 497.5 529.8 512.0 512.0 C 526.5 494.2 539.6 475.3 555.5 458.7 C 571.4 442.2 587.6 424.2 607.2 412.8 C 626.8 401.3 650.2 388.9 673.1 390.0 C 696.1 391.1 726.9 399.1 744.7 419.4 C 762.5 439.7 780.0 481.1 780.0 512.0 Z" fill="none" stroke="#4934E1" stroke-width="64"/></svg>`;
 
@@ -15,6 +10,38 @@ type Credential = {
   method: string;
   headers: Record<string, string>;
   onReject?: () => void;
+};
+
+type CreditRates = {
+  input: number;
+  cachedInput: number;
+  output: number;
+  cacheWrite?: number;
+};
+
+type CreditModelRow = {
+  model: string;
+  displayName: string;
+  approxCreditsPerMTokens: number;
+  creditsThisMonth: number;
+  tokensThisMonth: number;
+  description: string;
+  rates?: CreditRates;
+};
+
+type CreditsData = {
+  enabled: boolean;
+  tier: string;
+  periodStart: Date | undefined;
+  periodEnd: Date | undefined;
+  allowanceCredits: number;
+  usedCredits: number;
+  remainingCredits: number;
+  packCredits: number;
+  packExpiresAt: Date | undefined;
+  frontierPaused: boolean;
+  frozen: boolean;
+  models: CreditModelRow[];
 };
 
 type ModelRow = {
@@ -33,15 +60,8 @@ defineProvider({
   id: "nan-usage",
   name: "NaN Builders",
   icon: { monogram: "NaN", tint: "#4934E1", svg: NAN_MARK },
-  endpoints: [NAN_API, NAN_INFERENCE_API],
-  settings: [
-    {
-      key: "API_KEY",
-      title: "API key",
-      subtitle: "cloud.nan.builders, user settings, API Keys. Without a key the plugin reads browser cookies.",
-      type: "secure",
-    },
-  ],
+  endpoints: [NAN_API],
+  settings: [],
   capabilities: ["browser-cookies", "http-status", "persistent-storage"],
   cookieDomains: ["nan.builders"],
   async fetchUsage(ctx) {
@@ -77,10 +97,247 @@ defineProvider({
       return value;
     };
 
-    // One credential list, tried in order: the API key first, then dashboard cookie scopes.
-    const key = (ctx.settings.getSecret("API_KEY") ?? "").trim();
+    const tokens = (value: number): string =>
+      value >= 1e9
+        ? `${(value / 1e9).toFixed(1).replace(/\.0$/, "")}B`
+        : value >= 1e6
+          ? `${(value / 1e6).toFixed(1).replace(/\.0$/, "")}M`
+          : value >= 1e3
+            ? `${(value / 1e3).toFixed(1).replace(/\.0$/, "")}K`
+            : String(value);
+
+    const day = (value: Date | undefined, withYear = false): string | undefined => {
+      if (value === undefined) return undefined;
+      try {
+        const monthDay = ctx.format.monthDay(value);
+        return withYear ? `${monthDay} ${value.getFullYear()}` : monthDay;
+      } catch (error) {
+        void error;
+        return undefined;
+      }
+    };
+
+    const formatCredits = (value: number): string => {
+      if (!Number.isFinite(value) || value <= 0) return "0";
+      const floored = Math.floor(value * 10) / 10;
+      return floored % 1 === 0
+        ? floored.toLocaleString("en-US")
+        : floored.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    };
+
+    const parseCredits = (body: Record<string, unknown>): CreditsData | undefined => {
+      if (body.enabled !== true) return undefined;
+      const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+      const parseDate = (v: unknown): Date | undefined => {
+        if (typeof v !== "string" || !v) return undefined;
+        try {
+          const d = ctx.date.iso(v);
+          return d && !Number.isNaN(d.getTime()) ? d : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+
+      const allowance = num(body.allowanceCredits);
+      const used = num(body.usedCredits);
+      const remaining =
+        typeof body.remainingCredits === "number" && Number.isFinite(body.remainingCredits)
+          ? Math.max(0, body.remainingCredits)
+          : Math.max(0, allowance - used);
+
+      const rawModels = Array.isArray(body.models) ? body.models : [];
+      const models: CreditModelRow[] = [];
+      for (const item of rawModels) {
+        const m = object(item);
+        if (!m || typeof m.model !== "string" || !m.model) continue;
+        let rates: CreditRates | undefined;
+        const r = object(m.rates);
+        if (r) {
+          const inp = num(r.inputPerM ?? r.input);
+          const cinp = num(r.cachedInputPerM ?? r.cachedInput);
+          const outp = num(r.outputPerM ?? r.output);
+          const cwrite =
+            r.cacheWritePerM != null || r.cacheWrite != null
+              ? num(r.cacheWritePerM ?? r.cacheWrite)
+              : undefined;
+          rates = { input: inp, cachedInput: cinp, output: outp, cacheWrite: cwrite };
+        }
+        models.push({
+          model: m.model,
+          displayName: typeof m.displayName === "string" && m.displayName ? m.displayName : m.model,
+          approxCreditsPerMTokens: num(m.approxCreditsPerMTokens),
+          creditsThisMonth: num(m.creditsThisMonth),
+          tokensThisMonth: num(m.tokensThisMonth),
+          description: typeof m.description === "string" ? m.description : "",
+          rates,
+        });
+      }
+
+      return {
+        enabled: true,
+        tier: typeof body.tier === "string" ? body.tier : "inference",
+        periodStart: parseDate(body.periodStart),
+        periodEnd: parseDate(body.periodEnd),
+        allowanceCredits: allowance,
+        usedCredits: used,
+        remainingCredits: remaining,
+        packCredits: num(body.packCredits),
+        packExpiresAt: parseDate(body.packExpiresAt),
+        frontierPaused: body.frontierPaused === true,
+        frozen: body.frozen === true,
+        models,
+      };
+    };
+
+    const buildCreditsSnapshot = (
+      credits: CreditsData,
+      credential: Credential,
+    ) => {
+      const allowance = credits.allowanceCredits;
+      const used = credits.usedCredits;
+      const remaining = credits.remainingCredits;
+      const percentUsed = allowance > 0 ? ctx.pct(used, allowance) : credits.packCredits > 0 ? 0 : 100;
+
+      const reset = day(credits.periodEnd);
+      const resetDesc = allowance > 0
+        ? `${formatCredits(used)} / ${formatCredits(allowance)} créditos · ${formatCredits(remaining)} restantes`
+        : `${formatCredits(credits.packCredits)} créditos de pack restantes`;
+
+      const primary = {
+        usedPercent: percentUsed,
+        resetsAt: credits.periodEnd,
+        resetDescription: reset ? `${resetDesc} (reinicia ${reset})` : resetDesc,
+        title: "Créditos",
+      };
+
+      const retired = new Set(["glm5.2"].map(normalize));
+      const filteredModels = credits.models.filter(
+        (m) => !retired.has(normalize(m.model)) && !retired.has(normalize(m.displayName)),
+      );
+
+      const candidates = filteredModels.length > 0 ? filteredModels : credits.models;
+      const sortedModels = [...candidates].sort((a, b) => {
+        const usageA = a.creditsThisMonth > 0 || a.tokensThisMonth > 0 ? 1 : 0;
+        const usageB = b.creditsThisMonth > 0 || b.tokensThisMonth > 0 ? 1 : 0;
+        if (usageA !== usageB) return usageB - usageA;
+        return (
+          b.creditsThisMonth - a.creditsThisMonth ||
+          b.tokensThisMonth - a.tokensThisMonth ||
+          a.displayName.localeCompare(b.displayName)
+        );
+      });
+
+      const extraWindows = [
+        {
+          id: "nan-credits",
+          title: "Créditos",
+          window: primary,
+        },
+        ...sortedModels.map((m) => ({
+          id: `nan-${m.model}`,
+          title: m.displayName,
+          window: {
+            usedPercent: allowance > 0 ? ctx.pct(m.creditsThisMonth, allowance) : 0,
+            resetsAt: credits.periodEnd,
+            resetDescription: `${m.displayName} · ${formatCredits(m.creditsThisMonth)} créditos (${tokens(m.tokensThisMonth)} tokens)`,
+            title: m.displayName,
+          },
+        })),
+      ];
+
+      const sections: Record<string, unknown>[] = [];
+
+      const creditRows: Record<string, unknown>[] = [];
+      if (allowance > 0) {
+        creditRows.push({
+          label: "Plan mensual",
+          value: `${formatCredits(used)} / ${formatCredits(allowance)} créditos`,
+          secondaryValue: reset ? `reinicia ${reset}` : null,
+          progress: Math.min(1, used / allowance),
+          usageValue: used,
+        });
+      }
+      if (credits.packCredits > 0) {
+        const packParts: string[] = [`${formatCredits(credits.packCredits)} restantes`];
+        if (allowance > 0 && remaining <= 0) packParts.push("en uso");
+        const packExpiry = day(credits.packExpiresAt, true);
+        if (packExpiry) packParts.push(`caduca ${packExpiry}`);
+        creditRows.push({
+          label: "+ Pack créditos",
+          value: packParts.join(" · "),
+          secondaryValue: null,
+          progress: null,
+          usageValue: null,
+        });
+      }
+      if (credits.frozen) {
+        creditRows.push({
+          label: "Estado",
+          value: "Pausado (requiere suscripción activa)",
+          secondaryValue: null,
+          progress: null,
+          usageValue: null,
+        });
+      } else if (credits.frontierPaused) {
+        creditRows.push({
+          label: "Modelos Frontier",
+          value: "Requieren créditos de pack",
+          secondaryValue: null,
+          progress: null,
+          usageValue: null,
+        });
+      }
+
+      if (creditRows.length > 0) {
+        sections.push({
+          title: "Créditos",
+          rows: creditRows,
+        });
+      }
+
+      if (sortedModels.length > 0) {
+        sections.push({
+          title: "Modelos",
+          rows: sortedModels.map((row) => {
+            const hasUsage = row.creditsThisMonth > 0 || row.tokensThisMonth > 0;
+            const rateDesc =
+              row.approxCreditsPerMTokens > 0 ? `≈ ${row.approxCreditsPerMTokens.toFixed(1)} cr / 1M` : null;
+            return {
+              label: row.displayName,
+              value: hasUsage
+                ? `${formatCredits(row.creditsThisMonth)} cr (${tokens(row.tokensThisMonth)} tokens)`
+                : rateDesc ?? "Sin uso",
+              secondaryValue: hasUsage ? rateDesc : null,
+              progress:
+                allowance > 0 && row.creditsThisMonth > 0
+                  ? Math.min(1, row.creditsThisMonth / allowance)
+                  : null,
+              usageValue: row.creditsThisMonth > 0 ? row.creditsThisMonth : null,
+            };
+          }),
+        });
+      }
+
+      const tierLabel =
+        credits.tier === "premium" ? "Premium" : credits.tier === "packs" ? "Pack de créditos" : "Inference";
+      sections.push({
+        title: "Cuenta",
+        rows: [
+          { label: "Autenticación", value: credential.method },
+          { label: "Plan", value: tierLabel },
+        ],
+      });
+
+      return {
+        primary,
+        extraWindows,
+        details: sections,
+        identity: { organization: "NaN Builders", loginMethod: credential.method },
+        dataConfidence: "exact",
+      };
+    };
+
     const credentials: Credential[] = [];
-    if (key) credentials.push({ method: "API key", headers: { Authorization: `Bearer ${key}` } });
     if (ctx.browser.availability("nan.builders") !== "off") {
       try {
         for await (const session of ctx.browser.sessions("nan.builders")) {
@@ -93,6 +350,49 @@ defineProvider({
         }
       } catch (error) {
         void error;
+      }
+    }
+
+    // Try credits endpoint first
+    for (const credential of credentials) {
+      const headers = {
+        ...credential.headers,
+        Origin: NAN_DASHBOARD,
+        Referer: `${NAN_DASHBOARD}/dashboard`,
+      };
+      const get = (path: string, timeoutSeconds = 8) =>
+        ctx.http.get(`${NAN_API}${path}`, { headers, timeoutSeconds });
+
+      let response;
+      try {
+        response = await get("/api/usage/credits");
+      } catch (error) {
+        void error;
+        continue;
+      }
+
+      const seconds = Number(response.headers["retry-after"] ?? 1);
+      const retryAfterSeconds = Number.isFinite(seconds) && seconds >= 0 ? Math.min(10, seconds) : 1;
+      if (response.status === 429) {
+        throw ctx.fail.rateLimited("NaN Builders rate limit reached.", { retryAfterSeconds });
+      }
+      if (response.status === 408 || response.status >= 500) {
+        throw ctx.fail.providerUnavailable("NaN Builders is unavailable.", { retryAfterSeconds });
+      }
+      if (response.status === 404) {
+        break;
+      }
+
+      if (response.status === 200) {
+        try {
+          const body = parse(response.bodyText);
+          const credits = parseCredits(body);
+          if (credits && credits.enabled) {
+            return buildCreditsSnapshot(credits, credential);
+          }
+        } catch (error) {
+          void error;
+        }
       }
     }
 
@@ -138,29 +438,6 @@ defineProvider({
         start && Number(start[2]) >= 1 && Number(start[2]) <= 12 && Number(start[3]) >= 1 && Number(start[3]) <= 31
           ? new Date(Date.UTC(Number(start[1]), Number(start[2]), 1))
           : undefined;
-      // A retired model can outlive its dashboard listing inside the quota payload. /v1/models is
-      // the authoritative list of what the cluster serves today, but it needs the API key: a cookie
-      // session cannot ask, so it keeps the payload exactly as reported.
-      const servedModels = async (): Promise<Set<string> | undefined> => {
-        try {
-          const result = await ctx.http.get(`${NAN_INFERENCE_API}/v1/models`, {
-            headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
-            timeoutSeconds: 4,
-          });
-          if (result.status !== 200) return undefined;
-          const body = object(JSON.parse(result.bodyText));
-          const data = body?.data;
-          if (!Array.isArray(data)) return undefined;
-          const ids = data
-            .map((entry: unknown) => object(entry)?.id)
-            .filter((id): id is string => typeof id === "string" && id.length > 0)
-            .map(normalize);
-          return ids.length > 0 ? new Set(ids) : undefined;
-        } catch (error) {
-          void error;
-          return undefined;
-        }
-      };
       const models: ModelRow[] = quota.models.map((value: unknown) => {
         const row = object(value) ?? fail("model");
         if (typeof row.model !== "string" || !ctx.isDetailLabel(row.model)) return fail("model name");
@@ -189,9 +466,9 @@ defineProvider({
         return { name: row.model, cap, used, extra, extraUsable, extraExpiresAt, hours, resetsAt };
       });
 
-      const served = credential.method === "API key" ? await servedModels() : undefined;
-      const filtered = served === undefined ? models : models.filter((row) => matchesServed(row.name, served));
-      // Fail open: an empty result means the two naming schemes disagreed, not that nothing is left.
+      const retired = new Set(["glm5.2"].map(normalize));
+      const filtered = models.filter((row) => !retired.has(normalize(row.name)));
+      // Fail open: an empty result means the filter disagreed, not that nothing is left.
       const visible = filtered.length > 0 ? filtered : models;
 
       // A rolling tier is a paid add-on the account may not hold, and a zero cap is no allowance at
@@ -203,26 +480,6 @@ defineProvider({
       const percent = (row: ModelRow): number => ctx.pct(row.used, row.cap);
       const byUsage = (a: ModelRow, b: ModelRow): number =>
         percent(b) - percent(a) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-      const tokens = (value: number): string =>
-        value >= 1e9
-          ? `${(value / 1e9).toFixed(1).replace(/\.0$/, "")}B`
-          : value >= 1e6
-            ? `${(value / 1e6).toFixed(1).replace(/\.0$/, "")}M`
-            : value >= 1e3
-              ? `${(value / 1e3).toFixed(1).replace(/\.0$/, "")}K`
-              : String(value);
-      const day = (value: Date | undefined, withYear = false): string | undefined => {
-        if (value === undefined) return undefined;
-        try {
-          const monthDay = ctx.format.monthDay(value);
-          // The host formats "Apr 29" and drops the year, which is ambiguous for an extra-usage
-          // pool that can expire more than a year out.
-          return withYear ? `${monthDay} ${value.getFullYear()}` : monthDay;
-        } catch (error) {
-          void error;
-          return undefined;
-        }
-      };
 
       // Named windows stay in the snapshot so Settings → Plugins → Menu bar metric can pin one
       // model. They are not drawn in the card, which lists every model instead.
@@ -331,15 +588,10 @@ defineProvider({
       };
     }
 
-    if (rejected && key && credentials.length === 1) {
-      throw ctx.fail.authenticationExpired(
-        "NaN Builders rejected the API key. Create a new one at cloud.nan.builders, user settings, API Keys.",
-      );
-    }
     if (rejected) throw ctx.fail.authenticationExpired("NaN Builders rejected the stored session. Sign in again.");
     throw ctx.fail.missingCredential(
-      "Add a NaN API key in the plugin settings (cloud.nan.builders, user settings, API Keys), " +
-        `or sign in to cloud.nan.builders. Supported browsers: ${ctx.browser.supportedBrowsers}.`,
+      "Sign in to cloud.nan.builders in a supported browser. " +
+        `Supported browsers: ${ctx.browser.supportedBrowsers}. If you use Safari, enable Full Disk Access for CodexBar in System Settings > Privacy & Security.`,
     );
   },
 });

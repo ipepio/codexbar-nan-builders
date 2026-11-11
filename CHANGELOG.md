@@ -3,6 +3,37 @@
 All notable changes to this plugin are recorded here. The version applies to `nan-usage.ts`: replace the file, then
 re-approve the plugin in CodexBar whenever the manifest changes.
 
+## 0.0.3 — 2026-11-11
+
+**Credit billing system**
+
+- Added support for NaN Builders' new credit-based billing system (`/api/usage/credits`).
+- Automatically publishes a **`primary` bar** in CodexBar ("Créditos") with overall credit consumption percentage,
+  monthly allowance, remaining credits, and renewal date.
+- Pack credits are displayed as a separate row (`+ Pack créditos`) with their remaining balance, expiry date, and
+  active usage status.
+- Models section lists each model's credit consumption, total token usage, and approximate rate per 1M tokens (`cr / 1M`).
+- Accounts on credit packs only (zero monthly allowance) are gracefully supported with pack-centric bars.
+- Honors account state flags: frozen account (`Pausado`) and paused frontier models (`frontierPaused`).
+
+**Authentication & Settings**
+
+- Replaced API key configuration with automatic browser session cookie detection (`ctx.browser.sessions("nan.builders")`).
+  NaN Builders restricts `/api/usage/credits` to interactive browser sessions (`session_required`).
+- Removed `API_KEY` from plugin settings (`settings: []`).
+- Documented Safari Full Disk Access requirement under macOS TCC protections (Chromium-based browsers work out-of-the-box).
+
+**Dual-mode fallback**
+
+- Seamless fallback to legacy per-model quota (`/api/usage/quota`) if the credits endpoint is unavailable or returns
+  `enabled: false`.
+- Preserves backward compatibility with previous per-model token quota displays and extra-usage pools.
+
+**Verification**
+
+- Added 6 new unit tests (21 tests in total) verifying primary bar metrics, pack credits display, model breakdown,
+  frozen status, pack-only accounts, and legacy fallback.
+
 ## 0.0.2 — 2026-10-29
 
 **Card layout**
